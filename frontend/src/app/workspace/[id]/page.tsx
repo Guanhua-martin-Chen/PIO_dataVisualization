@@ -374,12 +374,21 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     }
   }
 
-  // Rebuild the pivot whenever its configuration changes (and the sheet is ready).
+  // Rebuild the pivot whenever its configuration OR the active filters change.
+  const pivotFilterKey = JSON.stringify({
+    search: tableState.search,
+    brand: tableState.brand,
+    model: tableState.model,
+    modelYear: tableState.modelYear,
+    part: tableState.part,
+    startDate: tableState.startDate,
+    endDate: tableState.endDate,
+  });
   useEffect(() => {
     if (!workspace) return;
     loadPivotData(workspace.sheetName, tableState, pivotRows, pivotCols, pivotMeasure, pivotAgg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace?.sheetName, pivotRows, pivotCols, pivotMeasure, pivotAgg]);
+  }, [workspace?.sheetName, pivotRows, pivotCols, pivotMeasure, pivotAgg, pivotFilterKey]);
 
   function movePivotField(field: string, target: "rows" | "cols" | "available") {
     setPivotRows((prev) => prev.filter((f) => f !== field));
