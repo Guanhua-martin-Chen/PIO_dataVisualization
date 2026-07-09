@@ -70,6 +70,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [loadingMsg, setLoadingMsg] = useState("Restoring workspace\u2026");
   const [tableLoading, setTableLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("data");
+  const [dataSubTab, setDataSubTab] = useState("overview");
   const [tableState, setTableState] = useState<TableState>(defaultTableState);
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
@@ -91,6 +92,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [pivotMeasure, setPivotMeasure] = useState("quantity");
   const [pivotAgg, setPivotAgg] = useState("sum");
   const [pivotDragField, setPivotDragField] = useState<string | null>(null);
+  const [edaLoading, setEdaLoading] = useState(false);
 
   // Save custom column order to localStorage on change
   useEffect(() => {
@@ -180,9 +182,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     };
   }, [id]);
 
-  async function loadWorkspaceData(sheetName: string, state: TableState, silent = false) {
+  async function loadWorkspaceData(sheetName: string, state: TableState, silent = false, includeEdaDashboard = false) {
     const params = buildWorkspaceParams(state);
-    if (!silent) {
+    if (includeEdaDashboard) {
+      params.set("include_eda_dashboard", "true");
+      setEdaLoading(true);
+    } else if (!silent) {
       setTableLoading(true);
     }
     try {
@@ -238,7 +243,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "Failed to load worksheet data.");
     } finally {
-      if (!silent) {
+      if (includeEdaDashboard) {
+        setEdaLoading(false);
+      } else if (!silent) {
         setTableLoading(false);
       }
     }
@@ -252,7 +259,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       page: 1,
     };
     setTableState(nextState);
-    loadWorkspaceData(workspace.sheetName, nextState);
+    loadWorkspaceData(workspace.sheetName, nextState, false, dataSubTab === "eda");
   }
 
   async function loadChartData(sheetName: string, state: TableState) {
@@ -459,6 +466,13 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     messageApi.success("Anomaly Center refreshed with current Data Table filters");
   }
 
+  function handleDataSubTabChange(key: string) {
+    setDataSubTab(key);
+    if (key === "eda" && workspace && !workspace.edaDashboard) {
+      loadWorkspaceData(workspace.sheetName, tableState, true, true);
+    }
+  }
+
   function handleDragStart(e: React.DragEvent, index: number) {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
@@ -509,7 +523,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       sortOrder: resolvedSorter?.order ?? "",
     };
     if (workspace) {
-      loadWorkspaceData(workspace.sheetName, nextState);
+      loadWorkspaceData(workspace.sheetName, nextState, false, dataSubTab === "eda");
     }
   }
 
@@ -538,6 +552,261 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const columnsList = columnOrder.length > 0
     ? columnOrder.map((key) => workspace?.table.columns.find((c) => c.key === key)!)
     : (workspace?.table.columns ?? []);
+
+  function formatOptionalNumber(value: number | null | undefined, currency = false, digits = 2) {
+    if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+    return currency
+      ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value)
+      : new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
+  }
+
+  function renderEdaDashboard() {
+    const eda = workspace?.edaDashboard;
+    if (!eda) {
+      return (
+        <Card className="content-card">
+          <Spin spinning={edaLoading}>
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="Open this tab to build EDA metrics for the current filtered slice."
+            />
+          </Spin>
+        </Card>
+      );
+    }
+
+    const topTableColumns: TableColumnsType<{ name: string; value: number }> = [
+      {
+        title: "Name",
+        dataIndex: "name",
+        key: "name",
+        ellipsis: true,
+      },
+      {
+        title: "Revenue",
+        dataIndex: "value",
+        key: "value",
+        align: "right",
+        render: (value: number) => formatMetric(value, true),
+      },
+    ];
+
+    return (
+      <Spin spinning={edaLoading}>
+        <div className="tab-stack">
+          <Card className="content-card major-tab-intro">
+            <div className="major-tab-header">
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 8 }}>EDA Dashboard</div>
+                <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
+                  Exploratory checks for the uploaded sales slice, with wholesale trends read from the workbook when a wholesale sheet is available.
+                </Paragraph>
+              </div>
+              <Tag color="blue">EDA-only</Tag>
+            </div>
+          </Card>
+
+          <Row gutter={[18, 18]}>
+            <Col xs={24} md={12} xl={6}>
+              <Card className="metric-card">
+                <Statistic title="Rows in scope" value={formatMetric(eda.overview.rowCount)} />
+              </Card>
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <Card className="metric-card">
+                <Statistic title="Detected models" value={formatMetric(eda.overview.modelCount)} />
+              </Card>
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <Card className="metric-card">
+                <Statistic title="Model codes" value={formatMetric(eda.overview.modelCodeCount)} />
+              </Card>
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <Card className="metric-card">
+                <Statistic title="Distinct parts" value={formatMetric(eda.overview.partCount)} />
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[18, 18]}>
+            <Col xs={24} xl={8}>
+              <Card className="content-card" title="Data overview" style={{ height: "100%" }}>
+                <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr", rowGap: 12 }}>
+                  <div>
+                    <span className="health-label">Time range</span>
+                    <strong>
+                      {eda.overview.timeRange.min && eda.overview.timeRange.max
+                        ? `${eda.overview.timeRange.min} to ${eda.overview.timeRange.max}`
+                        : "N/A"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="health-label">Brands</span>
+                    <strong>{formatMetric(eda.overview.brandCount)}</strong>
+                  </div>
+                  <div>
+                    <span className="health-label">PIO revenue</span>
+                    <strong>{formatOptionalNumber(eda.overview.totalRevenue, true)}</strong>
+                  </div>
+                  <div>
+                    <span className="health-label">Installed qty</span>
+                    <strong>{formatOptionalNumber(eda.overview.totalQuantity)}</strong>
+                  </div>
+                </div>
+              </Card>
+            </Col>
+            <Col xs={24} xl={8}>
+              <Card className="content-card" title="Missing value check" style={{ height: "100%" }}>
+                <Table
+                  size="small"
+                  pagination={false}
+                  rowKey="field"
+                  columns={[
+                    { title: "Field", dataIndex: "field", key: "field" },
+                    { title: "Column", dataIndex: "column", key: "column", render: (value) => value ?? "-" },
+                    { title: "Missing", dataIndex: "missing", key: "missing", align: "right" },
+                    {
+                      title: "%",
+                      dataIndex: "missingPct",
+                      key: "missingPct",
+                      align: "right",
+                      render: (value: number) => `${value.toFixed(2)}%`,
+                    },
+                  ]}
+                  dataSource={eda.dataQuality.missing}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} xl={8}>
+              <Card className="content-card" title="Outlier and consistency check" style={{ height: "100%" }}>
+                <div className="summary-stack">
+                  <div className="summary-row"><span className="summary-dot" /><span>Negative revenue rows: {eda.dataQuality.outliers.negativeRevenueRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Negative quantity rows: {eda.dataQuality.outliers.negativeQuantityRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Zero quantity rows: {eda.dataQuality.outliers.zeroQuantityRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Unit price p01/p99 outliers: {eda.dataQuality.outliers.unitPriceOutlierRows}</span></div>
+                  <div className="summary-row">
+                    <span className="summary-dot" />
+                    <span>
+                      Unit price range: {formatOptionalNumber(eda.dataQuality.outliers.unitPriceP01, true)} to{" "}
+                      {formatOptionalNumber(eda.dataQuality.outliers.unitPriceP99, true)}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[18, 18]}>
+            <Col xs={24} xl={10}>
+              <Card className="content-card" title="Top brands">
+                <Table
+                  size="small"
+                  rowKey="name"
+                  pagination={false}
+                  columns={topTableColumns}
+                  dataSource={eda.rankings.topBrands}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} xl={14}>
+              <Card className="content-card" title="Revenue and wholesale relationship" style={{ height: "100%" }}>
+                <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr", rowGap: 12 }}>
+                  <div>
+                    <span className="health-label">Monthly correlation</span>
+                    <strong>{formatOptionalNumber(eda.relationship.revenueWholesaleCorrelation, false, 3)}</strong>
+                  </div>
+                  <div>
+                    <span className="health-label">Model code coverage</span>
+                    <strong>
+                      {eda.relationship.modelCodeCoveragePct === null
+                        ? "N/A"
+                        : `${eda.relationship.modelCodeCoveragePct.toFixed(2)}%`}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="health-label">Sales model codes</span>
+                    <strong>{eda.relationship.salesModelCodes}</strong>
+                  </div>
+                  <div>
+                    <span className="health-label">Wholesale model codes</span>
+                    <strong>{eda.relationship.wholesaleModelCodes}</strong>
+                  </div>
+                </div>
+                {eda.relationship.unmatchedSalesModelCodes.length ? (
+                  <Alert
+                    style={{ marginTop: 12 }}
+                    type="warning"
+                    showIcon
+                    message="Unmatched PIS_SERI samples"
+                    description={
+                      <div className="summary-stack">
+                        {eda.relationship.unmatchedSalesModelCodes.map((item) => {
+                          const value = typeof item === "string" ? item : item.value;
+                          const rows = typeof item === "string" ? [] : item.rows ?? [];
+                          return (
+                          <div key={value} className="summary-row">
+                            <span className="summary-dot" />
+                            <span>
+                              {value}: {rows.length ? `Excel row ${rows.join(", ")}` : "source row unavailable"}
+                            </span>
+                          </div>
+                          );
+                        })}
+                      </div>
+                    }
+                  />
+                ) : null}
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[18, 18]}>
+            <Col xs={24}>
+              <Card className="content-card" title="Part number vs description discrepancies">
+                <Paragraph className="workspace-copy">
+                  This check finds cases where one part number maps to multiple part descriptions. It helps catch naming drift,
+                  duplicated descriptions, or source-system text changes before part-level analysis and forecasting.
+                </Paragraph>
+                {eda.dataQuality.partDescriptionIssues.length ? (
+                  <Table
+                    size="small"
+                    rowKey="partNumber"
+                    pagination={false}
+                    columns={[
+                      { title: "Part number", dataIndex: "partNumber", key: "partNumber" },
+                      {
+                        title: "Type",
+                        dataIndex: "issueType",
+                        key: "issueType",
+                        render: (value: "description_mismatch" | "format_warning") => (
+                          <Tag color={value === "description_mismatch" ? "red" : "gold"}>
+                            {value === "description_mismatch" ? "Description mismatch" : "Case/format warning"}
+                          </Tag>
+                        ),
+                      },
+                      { title: "Descriptions", dataIndex: "descriptionCount", key: "descriptionCount", align: "right" },
+                      { title: "Variants", dataIndex: "variantCount", key: "variantCount", align: "right" },
+                      { title: "Rows", dataIndex: "rows", key: "rows", align: "right" },
+                      {
+                        title: "Samples",
+                        dataIndex: "descriptions",
+                        key: "descriptions",
+                        render: (values: string[]) => values.join(" | "),
+                      },
+                    ]}
+                    dataSource={eda.dataQuality.partDescriptionIssues}
+                  />
+                ) : (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No part-description discrepancies found." />
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </div>
+      </Spin>
+    );
+  }
 
   const columns: TableColumnsType<Record<string, string | number | null>> =
     columnsList
@@ -651,6 +920,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 options={workspace.workbook.sheetNames.map((sheetName) => ({ label: sheetName, value: sheetName }))}
                 onChange={(value) => {
                   setVisibleColumns([]);
+                  setDataSubTab("overview");
                   loadWorkspaceData(value, { ...defaultTableState, pageSize: tableState.pageSize });
                 }}
               />
@@ -681,7 +951,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     </Card>
                     <Tabs
                       className="workspace-subtabs"
-                      defaultActiveKey="overview"
+                      activeKey={dataSubTab}
+                      onChange={handleDataSubTabChange}
                       items={[
               {
                 key: "overview",
@@ -843,6 +1114,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     </Card>
                   </div>
                 ),
+              },
+              {
+                key: "eda",
+                label: "EDA Dashboard",
+                children: renderEdaDashboard(),
               },
               {
                 key: "pivot",
@@ -1418,6 +1694,32 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                             />
                           </Card>
                         ) : null}
+                        {chartData.insights.monthlyWholesale ? (
+                          <Card className="chart-card">
+                            <ReactECharts
+                              option={chartOption(
+                                chartData.insights.monthlyWholesale.title,
+                                chartData.insights.monthlyWholesale.labels,
+                                chartData.insights.monthlyWholesale.values,
+                                "line"
+                              )}
+                              style={{ height: 320 }}
+                            />
+                          </Card>
+                        ) : null}
+                        {chartData.insights.monthlyPnvw ? (
+                          <Card className="chart-card">
+                            <ReactECharts
+                              option={chartOption(
+                                chartData.insights.monthlyPnvw.title,
+                                chartData.insights.monthlyPnvw.labels,
+                                chartData.insights.monthlyPnvw.values,
+                                "line"
+                              )}
+                              style={{ height: 320 }}
+                            />
+                          </Card>
+                        ) : null}
                         {!Object.keys(chartData.insights).length ? (
                           <Card className="content-card">
                             <Empty
@@ -1604,7 +1906,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                     </div>
                                   </Col>
                                   <Col xs={24} xl={8}>
-                                    <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)", height: "100%" }}>
+                                    <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)", height: "100%" }}>
                                       <div style={{ fontWeight: 700, marginBottom: 10 }}>Evidence trail</div>
                                       <div className="summary-stack">
                                         {record.evidence.map((line) => (
@@ -1618,7 +1920,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                   </Col>
                                   <Col xs={24} xl={8}>
                                     <div style={{ display: "grid", gap: 16 }}>
-                                      <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)" }}>
+                                      <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)" }}>
                                         <div style={{ fontWeight: 700, marginBottom: 10 }}>Wholesale-linked model</div>
                                         {record.wholesaleSignal ? (
                                           <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -1651,7 +1953,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                           <Text type="secondary">No wholesale-linked model could be fit for this part with the current workbook structure.</Text>
                                         )}
                                       </Card>
-                                      <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)" }}>
+                                      <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)" }}>
                                         <div style={{ fontWeight: 700, marginBottom: 10 }}>Brand drivers</div>
                                         {record.brandDrivers.length ? (
                                           <div className="summary-stack">
@@ -1668,7 +1970,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                           <Text type="secondary">No brand-level shift surfaced in this slice.</Text>
                                         )}
                                       </Card>
-                                      <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)" }}>
+                                      <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)" }}>
                                         <div style={{ fontWeight: 700, marginBottom: 10 }}>Model drivers</div>
                                         {record.modelDrivers.length ? (
                                           <div className="summary-stack">

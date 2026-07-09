@@ -313,6 +313,7 @@ def get_workspace(
     sort_order: str = Query(default=""),
     start_date: str = Query(default=""),
     end_date: str = Query(default=""),
+    include_eda_dashboard: bool = Query(default=False),
 ) -> dict[str, Any]:
     session = _get_session(workbook_id)
     return _build_workspace_payload(
@@ -331,6 +332,7 @@ def get_workspace(
         sort_order=sort_order,
         start_date=start_date,
         end_date=end_date,
+        include_eda_dashboard=include_eda_dashboard,
     )
 
 
@@ -607,6 +609,7 @@ def _build_workspace_payload(
     sort_order: str = "",
     start_date: str = "",
     end_date: str = "",
+    include_eda_dashboard: bool = False,
 ) -> dict[str, Any]:
     bundle = _get_bundle(session, sheet_name)
     if bundle.dataframe.empty:
@@ -632,7 +635,7 @@ def _build_workspace_payload(
         sort_field=sort_field,
         sort_order=sort_order,
     )
-    return {
+    payload = {
         "workbook": {
             "id": session.workbook_id,
             "filename": session.filename,
@@ -644,7 +647,7 @@ def _build_workspace_payload(
         "overview": _build_overview(session.filename, sheet_name, bundle, filtered),
         "table": page_data,
         "classification": _build_field_classification(bundle),
-        "insights": _build_chart_payloads(bundle, filtered),
+        "insights": _build_chart_payloads(session, sheet_name, bundle, filtered),
         "filters": {
             "search": search,
             "brand": brand or [],
@@ -669,6 +672,437 @@ def _build_workspace_payload(
             end_date=end_date,
         ),
     }
+    if include_eda_dashboard:
+        payload["edaDashboard"] = _build_eda_dashboard(session, sheet_name, bundle, filtered)
+    return payload
+
+
+def _build_eda_dashboard(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+    filtered_df: pd.DataFrame,
+) -> dict[str, Any]:
+    df = filtered_df.copy()
+    columns = _resolve_eda_sales_columns(bundle)
+    date_series = _eda_date_series(bundle, df, columns["date"])
+    revenue = _eda_numeric_series(df, columns["revenue"])
+    quantity = _eda_numeric_series(df, columns["quantity"])
+    wholesale_long = _prepare_eda_wholesale_long(session, sheet_name)
+
+    overview = {
+        "rowCount": int(len(df)),
+        "timeRange": {
+            "min": date_series.min().date().isoformat() if date_series.notna().any() else None,
+            "max": date_series.max().date().isoformat() if date_series.notna().any() else None,
+        },
+        "modelCount": _eda_nunique(df, columns["model"]),
+        "modelCodeCount": _eda_nunique(df, columns["model_code"]),
+        "partCount": _eda_nunique(df, columns["part_number"]),
+        "brandCount": _eda_nunique(df, columns["brand"]),
+        "totalRevenue": _eda_float_or_none(revenue.sum()) if revenue is not None else None,
+        "totalQuantity": _eda_float_or_none(quantity.sum()) if quantity is not None else None,
+    }
+
+    monthly = _build_eda_monthly(df, columns, date_series, revenue, quantity, wholesale_long)
+    relationship = _build_eda_relationship(df, columns, monthly, wholesale_long, bundle.profile)
+
+    return {
+        "overview": overview,
+        "dataQuality": _build_eda_data_quality(df, columns, revenue, quantity),
+        "monthly": monthly,
+        "rankings": {
+            "topModels": _eda_top_groups(df, columns["model"], revenue, quantity),
+            "topParts": _eda_top_parts(df, columns, revenue, quantity),
+            "topBrands": _eda_top_groups(df, columns["brand"], revenue, quantity),
+        },
+        "relationship": relationship,
+    }
+
+
+def _resolve_eda_sales_columns(bundle: DatasetBundle) -> dict[str, str | None]:
+    df = bundle.dataframe
+
+    def pick(*candidates: str | None) -> str | None:
+        for candidate in candidates:
+            if candidate and candidate in df.columns:
+                return candidate
+        return None
+
+    return {
+        "date": pick(bundle.roles.get("date"), "PIS_MST_IVC_DT", "YYYYMM"),
+        "brand": pick("PIS_CMP_KND", bundle.roles.get("brand")),
+        "model": pick(bundle.roles.get("model"), "Model"),
+        "model_code": pick("PIS_SERI"),
+        "part_number": pick(bundle.roles.get("part_number"), "PIS_PNO"),
+        "part_description": pick(bundle.roles.get("part_description"), "Part Description"),
+        "quantity": pick(bundle.roles.get("installation_quantity"), "SumOfPIS_INST_QT"),
+        "revenue": pick(bundle.roles.get("revenue"), "SumOfPIS_CRP_CFM_PRI"),
+    }
+
+
+def _eda_date_series(bundle: DatasetBundle, df: pd.DataFrame, column: str | None) -> pd.Series:
+    if column and column in bundle.date_candidates:
+        return bundle.date_candidates[column].reindex(df.index)
+    if column and column in df.columns:
+        if column == "YYYYMM":
+            return pd.to_datetime(df[column].astype(str) + "01", format="%Y%m%d", errors="coerce")
+        return pd.to_datetime(df[column], errors="coerce")
+    return pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+
+
+def _eda_numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series | None:
+    if not column or column not in df.columns:
+        return None
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _eda_nunique(df: pd.DataFrame, column: str | None) -> int:
+    if not column or column not in df.columns:
+        return 0
+    values = df[column].dropna().astype(str).str.strip()
+    return int(values[values != ""].nunique())
+
+
+def _eda_float_or_none(value: Any) -> float | None:
+    try:
+        if pd.isna(value):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _build_eda_monthly(
+    df: pd.DataFrame,
+    columns: dict[str, str | None],
+    date_series: pd.Series,
+    revenue: pd.Series | None,
+    quantity: pd.Series | None,
+    wholesale_long: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    work = pd.DataFrame({"__date": date_series})
+    work["__month"] = work["__date"].dt.to_period("M").astype(str)
+    work["__revenue"] = revenue if revenue is not None else 0.0
+    work["__quantity"] = quantity if quantity is not None else 0.0
+    work = work[work["__date"].notna()]
+    sales_monthly = (
+        work.groupby("__month", as_index=False)
+        .agg(pioRevenue=("__revenue", "sum"), pioQuantity=("__quantity", "sum"))
+    )
+
+    if wholesale_long.empty:
+        merged = sales_monthly
+        merged["wholesaleUnits"] = pd.NA
+    else:
+        wholesale_monthly = wholesale_long.groupby("month", as_index=False).agg(wholesaleUnits=("units", "sum"))
+        merged = sales_monthly.merge(wholesale_monthly, left_on="__month", right_on="month", how="outer")
+        merged["__month"] = merged["__month"].fillna(merged["month"])
+        merged = merged.drop(columns=["month"], errors="ignore")
+
+    merged = merged.sort_values("__month")
+    latest_month = work["__date"].max().to_period("M").to_timestamp() if not work.empty else None
+    if latest_month is not None:
+        merged["__monthStart"] = pd.to_datetime(merged["__month"] + "-01", errors="coerce")
+        merged = merged[merged["__monthStart"] < latest_month].drop(columns=["__monthStart"], errors="ignore")
+    rows: list[dict[str, Any]] = []
+    for record in merged.to_dict("records"):
+        wholesale_units = _eda_float_or_none(record.get("wholesaleUnits"))
+        pio_revenue = _eda_float_or_none(record.get("pioRevenue")) or 0.0
+        pio_quantity = _eda_float_or_none(record.get("pioQuantity")) or 0.0
+        rows.append(
+            {
+                "month": record["__month"],
+                "pioRevenue": pio_revenue,
+                "pioQuantity": pio_quantity,
+                "wholesaleUnits": wholesale_units,
+                "pnvw": (pio_revenue / wholesale_units) if wholesale_units and wholesale_units != 0 else None,
+            }
+        )
+    return rows
+
+
+def _build_eda_data_quality(
+    df: pd.DataFrame,
+    columns: dict[str, str | None],
+    revenue: pd.Series | None,
+    quantity: pd.Series | None,
+) -> dict[str, Any]:
+    labels = {
+        "date": "Date",
+        "brand": "Brand",
+        "model": "Model",
+        "model_code": "Model code",
+        "part_number": "Part number",
+        "part_description": "Part description",
+        "quantity": "Quantity",
+        "revenue": "Revenue",
+    }
+    missing = []
+    total_rows = max(len(df), 1)
+    for key, label in labels.items():
+        column = columns.get(key)
+        if column and column in df.columns:
+            blank_mask = df[column].isna() | (df[column].astype(str).str.strip() == "")
+            missing_count = int(blank_mask.sum())
+        else:
+            missing_count = len(df)
+        missing.append(
+            {
+                "field": label,
+                "column": column,
+                "missing": missing_count,
+                "missingPct": round(missing_count / total_rows * 100, 2),
+            }
+        )
+
+    unit_price = None
+    if revenue is not None and quantity is not None:
+        unit_price = revenue.where(quantity != 0) / quantity.where(quantity != 0)
+        unit_price = unit_price.replace([float("inf"), float("-inf")], pd.NA).dropna()
+    if unit_price is not None and len(unit_price) >= 2:
+        p01 = float(unit_price.quantile(0.01))
+        p99 = float(unit_price.quantile(0.99))
+        unit_outliers = int(((unit_price < p01) | (unit_price > p99)).sum())
+    else:
+        p01 = None
+        p99 = None
+        unit_outliers = 0
+
+    return {
+        "missing": missing,
+        "outliers": {
+            "negativeRevenueRows": int((revenue < 0).sum()) if revenue is not None else 0,
+            "negativeQuantityRows": int((quantity < 0).sum()) if quantity is not None else 0,
+            "zeroQuantityRows": int((quantity == 0).sum()) if quantity is not None else 0,
+            "unitPriceOutlierRows": unit_outliers,
+            "unitPriceP01": p01,
+            "unitPriceP99": p99,
+        },
+        "partDescriptionIssues": _build_eda_part_description_issues(
+            df,
+            columns.get("part_number"),
+            columns.get("part_description"),
+        ),
+    }
+
+
+def _build_eda_part_description_issues(
+    df: pd.DataFrame,
+    part_col: str | None,
+    desc_col: str | None,
+) -> list[dict[str, Any]]:
+    if not part_col or not desc_col or part_col not in df.columns or desc_col not in df.columns:
+        return []
+    work = df[[part_col, desc_col]].dropna().copy()
+    work[part_col] = work[part_col].astype(str).str.strip()
+    work[desc_col] = work[desc_col].astype(str).str.strip()
+    work = work[(work[part_col] != "") & (work[desc_col] != "")]
+    if work.empty:
+        return []
+    rows = []
+    for part_number, group in work.groupby(part_col):
+        descriptions = sorted(group[desc_col].dropna().unique().tolist())
+        normalized_descriptions = {
+            " ".join(description.lower().split())
+            for description in descriptions
+        }
+        if len(descriptions) > 1:
+            rows.append(
+                {
+                    "partNumber": part_number,
+                    "issueType": "description_mismatch" if len(normalized_descriptions) > 1 else "format_warning",
+                    "descriptionCount": len(normalized_descriptions),
+                    "variantCount": len(descriptions),
+                    "descriptions": descriptions[:5],
+                    "rows": int(len(group)),
+                }
+            )
+    return sorted(
+        rows,
+        key=lambda row: (row["issueType"] == "description_mismatch", row["descriptionCount"], row["rows"]),
+        reverse=True,
+    )[:10]
+
+
+def _eda_top_groups(
+    df: pd.DataFrame,
+    group_col: str | None,
+    revenue: pd.Series | None,
+    quantity: pd.Series | None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    if not group_col or group_col not in df.columns:
+        return []
+    metric = revenue if revenue is not None else quantity
+    if metric is None:
+        return []
+    work = pd.DataFrame({"name": df[group_col].fillna("").astype(str).str.strip(), "value": metric})
+    work = work[work["name"] != ""]
+    grouped = work.groupby("name", as_index=False)["value"].sum().sort_values("value", ascending=False).head(limit)
+    return [{"name": row["name"], "value": float(row["value"])} for row in grouped.to_dict("records")]
+
+
+def _eda_top_parts(
+    df: pd.DataFrame,
+    columns: dict[str, str | None],
+    revenue: pd.Series | None,
+    quantity: pd.Series | None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    part_col = columns.get("part_number")
+    desc_col = columns.get("part_description")
+    if not part_col or part_col not in df.columns:
+        return []
+    metric = revenue if revenue is not None else quantity
+    if metric is None:
+        return []
+    names = df[part_col].fillna("").astype(str).str.strip()
+    if desc_col and desc_col in df.columns:
+        desc = df[desc_col].fillna("").astype(str).str.strip()
+        names = names.where(desc == "", names + " - " + desc)
+    work = pd.DataFrame({"name": names, "value": metric})
+    work = work[work["name"] != ""]
+    grouped = work.groupby("name", as_index=False)["value"].sum().sort_values("value", ascending=False).head(limit)
+    return [{"name": row["name"], "value": float(row["value"])} for row in grouped.to_dict("records")]
+
+
+def _build_eda_relationship(
+    df: pd.DataFrame,
+    columns: dict[str, str | None],
+    monthly: list[dict[str, Any]],
+    wholesale_long: pd.DataFrame,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    corr_df = pd.DataFrame(monthly)
+    corr = None
+    if {"pioRevenue", "wholesaleUnits"}.issubset(corr_df.columns):
+        pairs = corr_df[["pioRevenue", "wholesaleUnits"]].dropna()
+        if len(pairs) >= 2 and pairs["pioRevenue"].nunique() > 1 and pairs["wholesaleUnits"].nunique() > 1:
+            corr = round(float(pairs["pioRevenue"].corr(pairs["wholesaleUnits"])), 3)
+
+    sales_codes: set[str] = set()
+    code_rows: dict[str, list[int]] = {}
+    model_code_col = columns.get("model_code")
+    if model_code_col and model_code_col in df.columns:
+        normalized = _eda_normalized_code_frame(df, model_code_col, profile or {})
+        sales_codes = set(normalized["value"].tolist())
+        for value, group in normalized.groupby("value"):
+            code_rows[value] = [int(row) for row in group["excelRow"].head(5).tolist()]
+    wholesale_codes: set[str] = set()
+    if not wholesale_long.empty and "modelCode" in wholesale_long.columns:
+        wholesale_codes = set(_eda_normalize_code_series(wholesale_long["modelCode"]))
+    matched = sales_codes & wholesale_codes
+    coverage = round(len(matched) / len(sales_codes) * 100, 2) if sales_codes else None
+
+    return {
+        "revenueWholesaleCorrelation": corr,
+        "matchedModelCodes": len(matched),
+        "salesModelCodes": len(sales_codes),
+        "wholesaleModelCodes": len(wholesale_codes),
+        "modelCodeCoveragePct": coverage,
+        "unmatchedSalesModelCodes": [
+            {"value": value, "rows": code_rows.get(value, [])}
+            for value in sorted(sales_codes - wholesale_codes)[:10]
+        ],
+    }
+
+
+def _eda_normalize_code_series(series: pd.Series) -> list[str]:
+    values = series.dropna().astype(str).str.strip().str.upper()
+    return [value for value in values.unique().tolist() if value]
+
+
+def _eda_normalized_code_frame(df: pd.DataFrame, column: str, profile: dict[str, Any]) -> pd.DataFrame:
+    header_row = int(profile.get("header_row", 1) or 1)
+    header_depth = int(profile.get("header_depth", 1) or 1)
+    values = df[column].dropna().astype(str).str.strip().str.upper()
+    values = values[values != ""]
+    return pd.DataFrame(
+        {
+            "value": values,
+            "excelRow": [int(index) + header_row + header_depth for index in values.index],
+        }
+    )
+
+
+def _prepare_eda_wholesale_long(session: WorkbookSession, current_sheet: str) -> pd.DataFrame:
+    wholesale_bundle = _find_wholesale_bundle(session, exclude_sheet=current_sheet)
+    if wholesale_bundle is None:
+        return pd.DataFrame(columns=["brand", "model", "modelCode", "month", "units"])
+
+    df = wholesale_bundle.dataframe.copy()
+    if df.empty:
+        return pd.DataFrame(columns=["brand", "model", "modelCode", "month", "units"])
+
+    lower_columns = {str(col).strip().lower(): col for col in df.columns}
+    brand_col = lower_columns.get("brand")
+    model_col = lower_columns.get("model")
+    model_code_col = (
+        lower_columns.get("model code")
+        or lower_columns.get("model_code")
+        or lower_columns.get("modelcode")
+    )
+    month_columns = [col for col in df.columns if _eda_month_number_from_column(col) is not None]
+    if not month_columns:
+        return pd.DataFrame(columns=["brand", "model", "modelCode", "month", "units"])
+
+    start_year = _infer_start_year(session) or datetime.now().year
+    records: list[dict[str, Any]] = []
+    current_channel = "Wholesale"
+    for _, row in df.iterrows():
+        brand_value = str(row.get(brand_col, "")).strip() if brand_col else ""
+        if brand_value.lower() == "fleet":
+            current_channel = "Fleet"
+            continue
+        if brand_value.lower() == "wholesale":
+            current_channel = "Wholesale"
+            continue
+        if current_channel != "Wholesale":
+            continue
+        if brand_value.lower().startswith("total"):
+            continue
+        model_value = str(row.get(model_col, "")).strip() if model_col else ""
+        code_value = str(row.get(model_code_col, model_value)).strip() if model_code_col else model_value
+        if not model_value and not code_value:
+            continue
+        for index, column in enumerate(month_columns):
+            month_number = _eda_month_number_from_column(column)
+            if month_number is None:
+                continue
+            year = start_year + index // 12
+            units = pd.to_numeric(row.get(column), errors="coerce")
+            if pd.isna(units):
+                continue
+            records.append(
+                {
+                    "brand": brand_value,
+                    "model": model_value,
+                    "modelCode": code_value,
+                    "month": f"{year:04d}-{month_number:02d}",
+                    "units": float(units),
+                }
+            )
+    return pd.DataFrame(records, columns=["brand", "model", "modelCode", "month", "units"])
+
+
+def _eda_month_number_from_column(column: Any) -> int | None:
+    label = str(column).strip().lower().split(".")[0][:3]
+    months = {
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "may": 5,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
+    }
+    return months.get(label)
 
 
 def _get_column_profile(bundle: DatasetBundle) -> pd.DataFrame:
@@ -815,7 +1249,12 @@ def _resolve_group(column: str, role: str | None, bundle: DatasetBundle) -> str:
     return "Other"
 
 
-def _build_chart_payloads(bundle: DatasetBundle, filtered_df: pd.DataFrame) -> dict[str, Any]:
+def _build_chart_payloads(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+    filtered_df: pd.DataFrame,
+) -> dict[str, Any]:
     charts: dict[str, Any] = {}
     date_col = bundle.roles.get("date")
     qty_col = bundle.roles.get("installation_quantity")
@@ -864,7 +1303,65 @@ def _build_chart_payloads(bundle: DatasetBundle, filtered_df: pd.DataFrame) -> d
             "values": [float(value) for value in top_parts.tolist()],
         }
 
+    charts.update(_build_wholesale_chart_payloads(session, sheet_name, bundle, filtered_df))
+
     return charts
+
+
+def _build_wholesale_chart_payloads(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+    filtered_df: pd.DataFrame,
+) -> dict[str, Any]:
+    columns = _resolve_eda_sales_columns(bundle)
+    date_series = _eda_date_series(bundle, filtered_df, columns["date"])
+    revenue = _eda_numeric_series(filtered_df, columns["revenue"])
+    wholesale_long = _prepare_eda_wholesale_long(session, sheet_name)
+    if wholesale_long.empty or revenue is None or date_series.dropna().empty:
+        return {}
+
+    model_code_col = columns.get("model_code")
+    if model_code_col and model_code_col in filtered_df.columns:
+        sales_codes = set(_eda_normalize_code_series(filtered_df[model_code_col]))
+        if sales_codes:
+            wholesale_long = wholesale_long[
+                wholesale_long["modelCode"].fillna("").astype(str).str.strip().str.upper().isin(sales_codes)
+            ]
+    if wholesale_long.empty:
+        return {}
+
+    sales = pd.DataFrame({"date": date_series, "revenue": revenue})
+    sales = sales[sales["date"].notna()].copy()
+    if sales.empty:
+        return {}
+    latest_month = sales["date"].max().to_period("M").to_timestamp()
+    sales["month"] = sales["date"].dt.to_period("M").astype(str)
+    sales_monthly = sales.groupby("month", as_index=False).agg(pioRevenue=("revenue", "sum"))
+    wholesale_monthly = wholesale_long.groupby("month", as_index=False).agg(wholesaleUnits=("units", "sum"))
+    monthly = sales_monthly.merge(wholesale_monthly, on="month", how="inner")
+    monthly["monthStart"] = pd.to_datetime(monthly["month"] + "-01", errors="coerce")
+    monthly = monthly[monthly["monthStart"] < latest_month].sort_values("month")
+    if monthly.empty:
+        return {}
+
+    pnvw_values = []
+    for row in monthly.to_dict("records"):
+        units = float(row["wholesaleUnits"])
+        pnvw_values.append(float(row["pioRevenue"]) / units if units else 0.0)
+
+    return {
+        "monthlyWholesale": {
+            "title": "Wholesale monthly trend",
+            "labels": monthly["month"].astype(str).tolist(),
+            "values": [float(value) for value in monthly["wholesaleUnits"].tolist()],
+        },
+        "monthlyPnvw": {
+            "title": "PNVW monthly trend",
+            "labels": monthly["month"].astype(str).tolist(),
+            "values": pnvw_values,
+        },
+    }
 
 
 def _monthly_chart(date_series: pd.Series, value_series: pd.Series, metric_name: str) -> dict[str, Any]:
