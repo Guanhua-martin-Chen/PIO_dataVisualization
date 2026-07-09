@@ -245,6 +245,25 @@ def _named_column(df: pd.DataFrame, name: str) -> str | None:
     return next((c for c in df.columns if str(c).strip().lower() == name), None)
 
 
+def is_wide_month_matrix(df: pd.DataFrame, roles: dict[str, str]) -> bool:
+    return not roles.get("date") and bool(month_columns(df))
+
+
+def wide_brand_series(df: pd.DataFrame) -> pd.Series:
+    brand_col = _named_column(df, "brand")
+    if not brand_col:
+        return pd.Series("", index=df.index, dtype="object")
+
+    raw_brand = df[brand_col].astype(str)
+    is_label = (
+        raw_brand.str.contains("total", case=False, na=False)
+        | raw_brand.str.strip().str.startswith("▣")
+        | (raw_brand.str.strip() == "Brand")
+        | raw_brand.isin(["", "nan", "NaN", "None"])
+    )
+    return df[brand_col].where(~is_label).ffill().fillna("").astype(str)
+
+
 def prepare_wide_long(df: pd.DataFrame, start_year: int) -> pd.DataFrame:
     """Melt a wide month-matrix sheet into a tidy frame.
 
@@ -256,28 +275,25 @@ def prepare_wide_long(df: pd.DataFrame, start_year: int) -> pd.DataFrame:
     if not cols:
         return pd.DataFrame(columns=["brand", "model", "channel", "month", "units"])
 
-    brand_col = _named_column(df, "brand")
     model_col = _named_column(df, "model")
     if not model_col:
         return pd.DataFrame(columns=["brand", "model", "channel", "month", "units"])
 
     work = df.reset_index(drop=True)
-    raw_brand = work[brand_col].astype(str) if brand_col else pd.Series("", index=work.index)
+    brand = wide_brand_series(work)
+    brand_col = _named_column(work, "brand")
+    marker_brand = (
+        work[brand_col].astype(str)
+        if brand_col
+        else pd.Series("", index=work.index)
+    )
 
     # Channel: everything from the first "Fleet" marker onward is Fleet.
     channel = pd.Series("Wholesale", index=work.index)
-    fleet_hits = work.index[raw_brand.str.contains("fleet", case=False, na=False)]
+    fleet_hits = work.index[marker_brand.str.contains("fleet", case=False, na=False)]
     if len(fleet_hits) > 0:
         channel.iloc[int(fleet_hits[0]):] = "Fleet"
 
-    # Clean brand: blank out subtotal / marker labels, then forward-fill the real codes.
-    is_label = (
-        raw_brand.str.contains("total", case=False, na=False)
-        | raw_brand.str.strip().str.startswith("▣")
-        | (raw_brand.str.strip() == "Brand")
-        | raw_brand.isin(["", "nan", "NaN", "None"])
-    )
-    brand = work[brand_col].where(~is_label).ffill() if brand_col else pd.Series("", index=work.index)
     model = work[model_col]
 
     keep = model.notna() & (model.astype(str).str.strip() != "")
@@ -344,7 +360,7 @@ def build_pivot(
     agg: str,
     wide_start_year: int | None = None,
 ) -> dict[str, Any]:
-    is_wide = not roles.get("date") and bool(month_columns(filtered_df))
+    is_wide = is_wide_month_matrix(filtered_df, roles)
 
     if is_wide:
         long_df = prepare_wide_long(filtered_df, start_year=wide_start_year or 2025)

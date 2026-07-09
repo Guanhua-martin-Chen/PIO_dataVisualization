@@ -1,6 +1,10 @@
 import dayjs from "dayjs";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "";
+
+export const API_BASE_URL = rawApiBaseUrl
+  .replace(/\/api\/?$/, "")
+  .replace(/\/$/, "");
 
 export type WorkbookMeta = {
   id: string;
@@ -200,6 +204,9 @@ export type ForecastPayload = {
     mae: number | null;
     wape: number | null;
     bias: number | null;
+    regime: string;
+    regimeCode: string;
+    forecastRisk: string;
   };
   series: Array<{
     month: string;
@@ -244,6 +251,39 @@ export type ForecastPayload = {
     deltaPct: number | null;
     confidence: string;
   }>;
+  portfolio: {
+    summary: {
+      scannedParts: number;
+      plannerReadyCount: number;
+      reviewCount: number;
+      doNotAutoPlanCount: number;
+      plannerReadyShare: number;
+    };
+    recommendedPart: string | null;
+    records: Array<{
+      part: string;
+      partDescription: string | null;
+      historyMonths: number;
+      latestActual: number;
+      nextForecast: number;
+      deltaPct: number | null;
+      confidence: string;
+      forecastRisk: string;
+      regime: string;
+      regimeCode: string;
+      wape: number | null;
+      bias: number | null;
+      modelName: string;
+      preprocessing: string;
+      reliabilityTier: string;
+      reliabilityCode: string;
+      reliabilityPriority: number;
+      reliabilityReason: string;
+      reliabilityScore: number;
+      totalQuantity: number;
+      quantityShare: number;
+    }>;
+  };
 };
 
 export type AnomalyCenterPayload = {
@@ -343,6 +383,62 @@ export type PivotPayload = {
   colCount: number;
   truncated: boolean;
   measureUnit: "currency" | "number";
+};
+
+export type AnalystPayload = {
+  memoryId?: number;
+  question: string;
+  answer: string;
+  evidence: string[];
+  retrievedContext: Array<{
+    source: string;
+    title: string;
+    content: string;
+    tags: string[];
+    score: number;
+  }>;
+  usedTools: string[];
+  focusPart: string | null;
+  riskLevel: string;
+  recommendedActions: string[];
+  followUpQuestions: string[];
+  mode: string;
+  model: string | null;
+  warnings: string[];
+};
+
+export type AnalystMemoryItem = {
+  id: number;
+  createdAt: string;
+  workbookId: string;
+  sheetName: string;
+  question: string;
+  focusPart: string | null;
+  riskLevel: string | null;
+  answer: string;
+  evidence: string[];
+  recommendedActions: string[];
+  followUpQuestions: string[];
+  retrievedContext: Array<{
+    source: string;
+    title: string;
+    content: string;
+    tags: string[];
+    score: number;
+  }>;
+  usedTools: string[];
+  warnings: string[];
+  mode: string | null;
+  model: string | null;
+  filters: {
+    search: string;
+    brand: string[];
+    model: string[];
+    modelYear: string[];
+    part: string[];
+    startDate: string;
+    endDate: string;
+  };
 };
 
 export const defaultTableState: TableState = {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import threading
 from dataclasses import dataclass, field
@@ -8,19 +9,27 @@ from datetime import datetime, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from uuid import uuid4
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
+from backend.app.retrieval import retrieve_analyst_context
 from pio_platform.data_loader import DatasetBundle, list_workbook_sheets, load_dataset
+from backend.app.memory_store import list_analyst_memories, save_analyst_memory
 from pio_platform.forecasting import (
+    _forecast_risk_label,
     build_anomaly_center,
+    build_forecast_portfolio,
     build_forecast_narrative,
     build_monthly_part_series,
     build_watchlist,
+    classify_series_regime,
     detect_series_anomalies,
     explain_latest_change,
     forecast_band,
@@ -28,7 +37,7 @@ from pio_platform.forecasting import (
     preprocess_history,
     select_best_model,
 )
-from pio_platform.pivot import build_pivot
+from pio_platform.pivot import build_pivot, is_wide_month_matrix, wide_brand_series
 from pio_platform.profiling import build_column_profile, build_insights, compute_kpis
 
 
@@ -83,6 +92,43 @@ class WorkbookSession:
 WORKBOOKS: dict[str, WorkbookSession] = {}
 # Values: "processing" | "ready" | "error"
 WORKBOOK_STATUS: dict[str, str] = {}
+
+
+class AnalystRequest(BaseModel):
+    question: str
+    focus_part: str = ""
+    horizon: int = Field(default=3, ge=1, le=12)
+    search: str = ""
+    brand: list[str] = Field(default_factory=list)
+    model: list[str] = Field(default_factory=list)
+    model_year: list[str] = Field(default_factory=list)
+    part: list[str] = Field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
+
+
+def _load_local_env() -> None:
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        return
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key or key in os.environ:
+                continue
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            os.environ[key] = value
+    except Exception:
+        return
+
+
+_load_local_env()
 
 
 # ── Index helpers ─────────────────────────────────────────────────────────────
@@ -364,6 +410,123 @@ def get_part_forecast(
     )
 
 
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast/export.csv")
+def export_forecast_csv(
+    workbook_id: str,
+    sheet_name: str,
+    part_number: str = Query(default=""),
+    horizon: int = Query(default=3, ge=1, le=12),
+    search: str = Query(default=""),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    model_year: list[str] = Query(default=[]),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+) -> StreamingResponse:
+    session = _get_session(workbook_id)
+    bundle = _get_bundle(session, sheet_name)
+    payload = _build_forecast_payload(
+        bundle=bundle,
+        part_number=part_number,
+        horizon=horizon,
+        search=search,
+        brand=brand,
+        model=model,
+        model_year=model_year,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    series_df = pd.DataFrame(payload["series"])
+    series_df.insert(0, "part_number", payload["selectedPart"])
+    series_df.insert(1, "part_description", payload.get("partDescription"))
+    output = StringIO()
+    series_df.to_csv(output, index=False)
+    output.seek(0)
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{session.filename.rsplit(".", 1)[0]}-{sheet_name}-forecast-{payload["selectedPart"]}.csv"'
+        )
+    }
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers=headers)
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast/export.xlsx")
+def export_forecast_xlsx(
+    workbook_id: str,
+    sheet_name: str,
+    part_number: str = Query(default=""),
+    horizon: int = Query(default=3, ge=1, le=12),
+    search: str = Query(default=""),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    model_year: list[str] = Query(default=[]),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+) -> StreamingResponse:
+    session = _get_session(workbook_id)
+    bundle = _get_bundle(session, sheet_name)
+    payload = _build_forecast_payload(
+        bundle=bundle,
+        part_number=part_number,
+        horizon=horizon,
+        search=search,
+        brand=brand,
+        model=model,
+        model_year=model_year,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    import io
+
+    summary_df = pd.DataFrame(
+        [
+            {
+                "partNumber": payload["selectedPart"],
+                "partDescription": payload.get("partDescription"),
+                "historyMonths": payload["summary"]["historyMonths"],
+                "horizon": payload["summary"]["horizon"],
+                "modelName": payload["summary"]["modelName"],
+                "confidence": payload["summary"]["confidence"],
+                "forecastRisk": payload["summary"]["forecastRisk"],
+                "latestActual": payload["summary"]["latestActual"],
+                "nextForecast": payload["summary"]["nextForecast"],
+                "recent3MonthAverage": payload["summary"]["recent3MonthAverage"],
+                "deltaPct": payload["summary"]["deltaPct"],
+                "mae": payload["summary"]["mae"],
+                "wape": payload["summary"]["wape"],
+                "bias": payload["summary"]["bias"],
+                "regime": payload["summary"]["regime"],
+                "preprocessing": payload["summary"]["preprocessing"],
+                "selectionBasis": payload["summary"]["selectionBasis"],
+            }
+        ]
+    )
+    series_df = pd.DataFrame(payload["series"])
+    candidate_df = pd.DataFrame(payload["summary"]["candidateScores"])
+    portfolio_df = pd.DataFrame(payload["portfolio"]["records"])
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        series_df.to_excel(writer, sheet_name="ForecastSeries", index=False)
+        candidate_df.to_excel(writer, sheet_name="ModelBacktest", index=False)
+        portfolio_df.to_excel(writer, sheet_name="Portfolio", index=False)
+    output.seek(0)
+
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{session.filename.rsplit(".", 1)[0]}-{sheet_name}-forecast-{payload["selectedPart"]}.xlsx"'
+        )
+    }
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
 @app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/anomaly-center")
 def get_anomaly_center(
     workbook_id: str,
@@ -390,6 +553,45 @@ def get_anomaly_center(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+@app.post("/api/workbooks/{workbook_id}/sheets/{sheet_name}/analyst")
+def ask_ai_analyst(
+    workbook_id: str,
+    sheet_name: str,
+    payload: AnalystRequest,
+) -> dict[str, Any]:
+    session = _get_session(workbook_id)
+    bundle = _get_bundle(session, sheet_name)
+    wholesale_bundle = _find_wholesale_bundle(session, exclude_sheet=sheet_name)
+    return _build_analyst_payload(
+        bundle=bundle,
+        wholesale_bundle=wholesale_bundle,
+        workbook_id=workbook_id,
+        sheet_name=sheet_name,
+        question=payload.question,
+        focus_part=payload.focus_part,
+        horizon=payload.horizon,
+        search=payload.search,
+        brand=payload.brand,
+        model=payload.model,
+        model_year=payload.model_year,
+        part=payload.part,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/analyst/memories")
+def get_analyst_memories(
+    workbook_id: str,
+    sheet_name: str,
+    limit: int = Query(default=12, ge=1, le=50),
+) -> dict[str, Any]:
+    _get_bundle(_get_session(workbook_id), sheet_name)
+    return {
+        "items": list_analyst_memories(workbook_id=workbook_id, sheet_name=sheet_name, limit=limit),
+    }
 
 
 @app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/pivot")
@@ -1470,7 +1672,8 @@ def _apply_filters(
 
     brand_col = bundle.roles.get("brand")
     if brand and brand_col and brand_col in df.columns:
-        mask &= df[brand_col].fillna("").astype(str).isin(brand)
+        brand_series = _display_series_for_column(bundle, brand_col)
+        mask &= brand_series.isin(brand)
 
     model_col = bundle.roles.get("model")
     if model and model_col and model_col in df.columns:
@@ -1543,7 +1746,10 @@ def _build_filter_options(
             bundle, search, brand=[], model=model, model_year=model_year, part=part,
             model_query=model_query, part_query=part_query, start_date=start_date, end_date=end_date
         )
-        brand_options = _build_value_options(df_for_brand[brand_col], limit=25)
+        brand_options = _build_value_options(
+            _display_series_for_column(bundle, brand_col).loc[df_for_brand.index],
+            limit=25,
+        )
     else:
         brand_options = []
 
@@ -1640,7 +1846,17 @@ def _build_forecast_payload(
     if not part_options:
         raise HTTPException(status_code=400, detail="No part numbers are available for forecasting in the selected slice.")
 
-    selected_part = part_number or part_options[0]["value"]
+    portfolio = build_forecast_portfolio(
+        filtered,
+        part_col=part_number_col,
+        qty_col=qty_col,
+        date_series=bundle.date_candidates[date_col],
+        part_description_col=part_description_col,
+        scan_limit=60,
+        top_n=18,
+    )
+
+    selected_part = part_number or portfolio.get("recommendedPart") or part_options[0]["value"]
     part_series = build_monthly_part_series(
         filtered,
         part_col=part_number_col,
@@ -1656,8 +1872,16 @@ def _build_forecast_payload(
     forecast_input, adjusted_points = preprocess_history(history, diagnostics.preprocessing)
     forecast_values = forecast_history(forecast_input, horizon=horizon, model_name=model_name)
     bands = forecast_band(history, forecast_values, diagnostics)
-    narrative = build_forecast_narrative(history, forecast_values, diagnostics)
     anomalies = detect_series_anomalies(part_series)
+    regime = classify_series_regime(history)
+    forecast_risk = _forecast_risk_label(diagnostics, regime, anomalies)
+    narrative = build_forecast_narrative(
+        history,
+        forecast_values,
+        diagnostics,
+        regime=regime,
+        forecast_risk=forecast_risk,
+    )
     change_analysis = explain_latest_change(
         filtered,
         part_col=part_number_col,
@@ -1725,6 +1949,9 @@ def _build_forecast_payload(
             "mae": diagnostics.mae,
             "wape": diagnostics.wape,
             "bias": diagnostics.bias,
+            "regime": regime["label"],
+            "regimeCode": regime["code"],
+            "forecastRisk": forecast_risk,
         },
         "series": history_rows + forecast_rows,
         "insights": narrative,
@@ -1737,6 +1964,7 @@ def _build_forecast_payload(
             date_series=bundle.date_candidates[date_col],
             limit=8,
         ),
+        "portfolio": portfolio,
     }
 
 
@@ -1801,6 +2029,471 @@ def _build_anomaly_center_payload(
         "endDate": end_date,
     }
     return anomaly_center
+
+
+def _build_analyst_payload(
+    bundle: DatasetBundle,
+    wholesale_bundle: DatasetBundle | None,
+    workbook_id: str,
+    sheet_name: str,
+    question: str,
+    focus_part: str,
+    horizon: int,
+    search: str,
+    brand: list[str],
+    model: list[str],
+    model_year: list[str],
+    part: list[str],
+    start_date: str,
+    end_date: str,
+) -> dict[str, Any]:
+    prompt = question.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="A question is required for the AI Analyst.")
+
+    filtered = _apply_filters(
+        bundle,
+        search=search,
+        brand=brand,
+        model=model,
+        model_year=model_year,
+        part=part,
+        model_query="",
+        part_query="",
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if filtered.empty:
+        raise HTTPException(status_code=400, detail="No rows remain after applying the selected AI Analyst filters.")
+
+    kpis = compute_kpis(filtered, bundle.roles)
+    anomaly_center = _build_anomaly_center_payload(
+        bundle=bundle,
+        wholesale_bundle=wholesale_bundle,
+        search=search,
+        brand=brand,
+        model=model,
+        model_year=model_year,
+        part=part,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    resolved_part = _resolve_analyst_part(
+        question=prompt,
+        focus_part=focus_part,
+        anomaly_center=anomaly_center,
+        filtered=filtered,
+        roles=bundle.roles,
+    )
+
+    used_tools = ["workspace_filters", "kpi_summary", "anomaly_center"]
+    warnings: list[str] = []
+    forecast_payload = None
+    if resolved_part:
+        try:
+            forecast_payload = _build_forecast_payload(
+                bundle=bundle,
+                part_number=resolved_part,
+                horizon=horizon,
+                search=search,
+                brand=brand,
+                model=model,
+                model_year=model_year,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            used_tools.append("forecast_center")
+        except HTTPException as exc:
+            warnings.append(exc.detail)
+
+    intent = _classify_analyst_intent(prompt)
+    draft_answer, evidence = _compose_analyst_answer(
+        question=prompt,
+        intent=intent,
+        kpis=kpis,
+        anomaly_center=anomaly_center,
+        forecast_payload=forecast_payload,
+        retrieved_context=[],
+    )
+    retrieved_context = retrieve_analyst_context(
+        workbook_id=workbook_id,
+        sheet_name=sheet_name,
+        question=prompt,
+        bundle=bundle,
+        filtered_df=filtered,
+        anomaly_center=anomaly_center,
+        forecast_payload=forecast_payload,
+        filters={
+            "search": search,
+            "brand": brand,
+            "model": model,
+            "modelYear": model_year,
+            "part": part,
+            "startDate": start_date,
+            "endDate": end_date,
+        },
+    )
+    if retrieved_context:
+        used_tools.append("context_retrieval")
+        draft_answer, evidence = _compose_analyst_answer(
+            question=prompt,
+            intent=intent,
+            kpis=kpis,
+            anomaly_center=anomaly_center,
+            forecast_payload=forecast_payload,
+            retrieved_context=retrieved_context,
+        )
+    risk_level = _derive_analyst_risk(anomaly_center=anomaly_center, forecast_payload=forecast_payload)
+    recommended_actions = _derive_recommended_actions(
+        anomaly_center=anomaly_center,
+        forecast_payload=forecast_payload,
+    )
+    follow_up_questions = _build_follow_up_questions(
+        anomaly_center=anomaly_center,
+        forecast_payload=forecast_payload,
+    )
+
+    mode = "grounded_tools"
+    model_name = None
+    llm_answer = _maybe_rewrite_with_llm(
+        question=prompt,
+        draft_answer=draft_answer,
+        evidence=evidence,
+        used_tools=used_tools,
+        kpis=kpis,
+        anomaly_center=anomaly_center,
+        forecast_payload=forecast_payload,
+        retrieved_context=retrieved_context,
+    )
+    if llm_answer:
+        draft_answer = llm_answer["answer"]
+        mode = llm_answer["mode"]
+        model_name = llm_answer["model"]
+    elif _ai_gateway_configured():
+        warnings.append("The external AI gateway was configured but did not return a usable answer, so the grounded fallback was used.")
+
+    memory_id = save_analyst_memory(
+        {
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "workbookId": workbook_id,
+            "sheetName": sheet_name,
+            "question": prompt,
+            "focusPart": forecast_payload["selectedPart"] if forecast_payload else resolved_part or None,
+            "riskLevel": risk_level,
+            "answer": draft_answer,
+            "evidence": evidence,
+            "recommendedActions": recommended_actions,
+            "followUpQuestions": follow_up_questions,
+            "usedTools": used_tools,
+            "warnings": warnings,
+            "mode": mode,
+            "model": model_name,
+            "retrievedContext": retrieved_context,
+            "filters": {
+                "search": search,
+                "brand": brand,
+                "model": model,
+                "modelYear": model_year,
+                "part": part,
+                "startDate": start_date,
+                "endDate": end_date,
+            },
+        }
+    )
+
+    return {
+        "memoryId": memory_id,
+        "question": prompt,
+        "answer": draft_answer,
+        "evidence": evidence,
+        "usedTools": used_tools,
+        "focusPart": forecast_payload["selectedPart"] if forecast_payload else resolved_part or None,
+        "riskLevel": risk_level,
+        "recommendedActions": recommended_actions,
+        "followUpQuestions": follow_up_questions,
+        "mode": mode,
+        "model": model_name,
+        "warnings": warnings,
+        "retrievedContext": retrieved_context,
+    }
+
+
+def _resolve_analyst_part(
+    question: str,
+    focus_part: str,
+    anomaly_center: dict[str, Any],
+    filtered: pd.DataFrame,
+    roles: dict[str, str],
+) -> str:
+    if focus_part:
+        return focus_part
+
+    part_col = roles.get("part_number")
+    if part_col and part_col in filtered.columns:
+        parts = (
+            filtered[part_col]
+            .dropna()
+            .astype(str)
+            .loc[lambda s: s.str.strip() != ""]
+            .unique()
+            .tolist()
+        )
+        lowered = question.lower()
+        for part_value in parts:
+            if part_value and part_value.lower() in lowered:
+                return part_value
+
+    if anomaly_center.get("records"):
+        return str(anomaly_center["records"][0]["part"])
+    return ""
+
+
+def _classify_analyst_intent(question: str) -> str:
+    lowered = question.lower()
+    if any(token in lowered for token in ["forecast", "predict", "next month", "next year", "confidence", "wape", "bias", "mae", "trust"]):
+        return "forecast"
+    if any(token in lowered for token in ["why", "drop", "decline", "down", "rose", "rise", "increase", "anomaly", "alert", "abnormal", "change"]):
+        return "change"
+    return "overview"
+
+
+def _derive_analyst_risk(
+    anomaly_center: dict[str, Any],
+    forecast_payload: dict[str, Any] | None,
+) -> str:
+    if forecast_payload:
+        forecast_risk = str(forecast_payload["summary"].get("forecastRisk", "")).lower()
+        confidence = str(forecast_payload["summary"].get("confidence", "")).lower()
+        wape = forecast_payload["summary"].get("wape")
+        if forecast_risk == "high" or confidence == "low" or (wape is not None and wape >= 0.55):
+            return "High"
+        if forecast_risk == "medium" or confidence == "medium" or (wape is not None and wape >= 0.3):
+            return "Medium"
+
+    top_alert = (anomaly_center.get("records") or [None])[0]
+    if top_alert:
+        if top_alert.get("forecastRisk") == "High" or top_alert.get("regimeCode") in {"structural_drop", "structural_ramp"}:
+            return "High"
+        if top_alert.get("forecastRisk") == "Medium" or top_alert.get("regimeCode") in {"declining", "accelerating", "volatile"}:
+            return "Medium"
+    return "Low"
+
+
+def _derive_recommended_actions(
+    anomaly_center: dict[str, Any],
+    forecast_payload: dict[str, Any] | None,
+) -> list[str]:
+    actions: list[str] = []
+    top_alert = (anomaly_center.get("records") or [None])[0]
+    if top_alert:
+        actions.append(f"Review the latest monthly change for part {top_alert['part']} before using it in a planning decision.")
+        if top_alert.get("modelDrivers"):
+            driver = top_alert["modelDrivers"][0]
+            actions.append(f"Check whether the shift is concentrated in model {driver['name']} because it is currently the top demand driver.")
+        if top_alert.get("wholesaleSignal") and top_alert["wholesaleSignal"].get("relationshipStrength") == "Weak":
+            actions.append("Do not assume wholesale alone explains the movement; inspect part-specific factors such as mix shift or program timing.")
+        if top_alert.get("regimeCode") == "structural_drop":
+            actions.append("Treat the series as a potential structural decline and avoid extrapolating older higher-volume months into near-term supply plans.")
+        elif top_alert.get("regimeCode") == "structural_ramp":
+            actions.append("Treat the series as a ramping part and review whether new-program demand is distorting the baseline.")
+
+    if forecast_payload:
+        summary = forecast_payload["summary"]
+        if summary.get("forecastRisk") == "High":
+            actions.append("Use the point forecast as a high-risk baseline only; apply planner override or scenario ranges before committing inventory.")
+        elif summary.get("forecastRisk") == "Medium":
+            actions.append("Compare the point forecast with recent 3-month average and anomaly notes before locking next-month demand.")
+        if summary.get("bias") is not None and summary["bias"] <= -0.25:
+            actions.append("The model has a meaningful under-forecast tendency, so review upside risk before finalizing replenishment.")
+        if summary.get("bias") is not None and summary["bias"] >= 0.25:
+            actions.append("The model has a meaningful over-forecast tendency, so sanity-check downside risk before finalizing replenishment.")
+
+    if not actions:
+        actions.append("No urgent risk is surfaced in the current slice, so the next step is to review the top parts and confirm the filter scope.")
+    return actions[:4]
+
+
+def _build_follow_up_questions(
+    anomaly_center: dict[str, Any],
+    forecast_payload: dict[str, Any] | None,
+) -> list[str]:
+    top_alert = (anomaly_center.get("records") or [None])[0]
+    follow_ups: list[str] = []
+
+    if top_alert:
+        follow_ups.append(f"Is the latest change in {top_alert['part']} driven by one model or broad-based demand?")
+        follow_ups.append(f"Does {top_alert['part']} look like a structural shift or a one-month anomaly?")
+    if forecast_payload:
+        focus = forecast_payload["selectedPart"]
+        follow_ups.append(f"What planner override range would be reasonable for {focus} given the current forecast risk?")
+        follow_ups.append(f"How does {focus} compare with its recent 3-month average and anomaly pattern?")
+
+    if not follow_ups:
+        follow_ups = [
+            "Which part deserves planner review first in the current slice?",
+            "Can the current forecast be trusted for the top alert part?",
+        ]
+    return follow_ups[:4]
+
+
+def _compose_analyst_answer(
+    question: str,
+    intent: str,
+    kpis: dict[str, Any],
+    anomaly_center: dict[str, Any],
+    forecast_payload: dict[str, Any] | None,
+    retrieved_context: list[dict[str, Any]],
+) -> tuple[str, list[str]]:
+    records = anomaly_center.get("records", [])
+    top_alert = records[0] if records else None
+    evidence: list[str] = []
+
+    total_records = int(kpis.get("Total Records") or 0)
+    total_qty = kpis.get("Total Installation Quantity")
+    total_revenue = kpis.get("Total Sales Revenue")
+    part_count = kpis.get("Distinct Part Count")
+
+    evidence.append(f"Current filtered scope contains {total_records:,} rows, {part_count or 0:,} distinct parts, {total_qty:,.0f} installation units, and ${total_revenue:,.0f} revenue." if total_qty is not None and total_revenue is not None else f"Current filtered scope contains {total_records:,} rows.")
+
+    if top_alert:
+        evidence.append(
+            f"Top anomaly lead is {top_alert['part']} ({top_alert['regime']}) with {top_alert['forecastRisk'].lower()} forecast risk and {(top_alert['deltaPct'] or 0):+.1f}% latest-month change."
+        )
+        for line in top_alert.get("evidence", [])[:2]:
+            evidence.append(line)
+
+    if forecast_payload:
+        summary = forecast_payload["summary"]
+        if summary.get("wape") is not None and summary.get("bias") is not None:
+            evidence.append(
+                f"Forecast focus part {forecast_payload['selectedPart']} uses {summary['modelName']} with {(summary['wape'] * 100):.1f}% WAPE, {(summary['bias'] * 100):+.1f}% bias, {summary['confidence'].lower()} confidence, and {summary['forecastRisk'].lower()} risk."
+            )
+        else:
+            evidence.append(
+                f"Forecast focus part {forecast_payload['selectedPart']} is available with {summary['confidence'].lower()} confidence."
+            )
+
+    for snippet in retrieved_context[:2]:
+        evidence.append(f"Retrieved context [{snippet['source']}]: {snippet['content']}")
+
+    if intent == "forecast" and forecast_payload:
+        summary = forecast_payload["summary"]
+        change_analysis = forecast_payload.get("changeAnalysis") or {}
+        quality_note = (
+            f"The backtest WAPE is {(summary['wape'] * 100):.1f}% and bias is {(summary['bias'] * 100):+.1f}% when available, "
+            if summary.get("wape") is not None and summary.get("bias") is not None
+            else "The backtest diagnostics are incomplete for this slice, "
+        )
+        answer = (
+            f"For the current slice, the most relevant forecast lead is part {forecast_payload['selectedPart']}. "
+            f"Next month is projected at {summary['nextForecast']:,.0f} units versus {summary['latestActual']:,.0f} in the latest actual month. "
+            f"{quality_note}so this should be read as a {summary['confidence'].lower()}-confidence, {summary['forecastRisk'].lower()}-risk baseline rather than a guaranteed outcome."
+        )
+        if change_analysis.get("notes"):
+            answer += f" The latest demand shift context is: {change_analysis['notes'][0]}"
+        return answer, evidence[:5]
+
+    if intent == "change" and top_alert:
+        answer = (
+            f"The strongest current explanation lead is part {top_alert['part']}"
+            f"{f' ({top_alert['partDescription']})' if top_alert.get('partDescription') else ''}. "
+            f"It is classified as {top_alert['regime'].lower()} with {top_alert['forecastRisk'].lower()} forecast risk. "
+            f"The latest month moved {(top_alert['deltaPct'] or 0):+.1f}% versus the prior month, which is large enough that the product is treating it as a planner-review signal rather than routine noise."
+        )
+        if top_alert.get("brandDrivers"):
+            driver = top_alert["brandDrivers"][0]
+            answer += f" Brand contribution is led by {driver['name']} at {driver['delta']:+,.0f} units."
+        if top_alert.get("modelDrivers"):
+            driver = top_alert["modelDrivers"][0]
+            answer += f" Model contribution is led by {driver['name']} at {driver['delta']:+,.0f} units."
+        return answer, evidence[:5]
+
+    answer = (
+        f"In the current filtered slice, the workspace covers {total_records:,} rows"
+        + (f", {total_qty:,.0f} installation units" if total_qty is not None else "")
+        + (f", and ${total_revenue:,.0f} revenue" if total_revenue is not None else "")
+        + ". "
+    )
+    if top_alert:
+        answer += (
+            f"The highest-priority issue to investigate is part {top_alert['part']}, which currently looks {top_alert['regime'].lower()} and carries {top_alert['forecastRisk'].lower()} forecast risk. "
+        )
+    if forecast_payload:
+        answer += (
+            f"The current forecast focus part is {forecast_payload['selectedPart']}, where confidence is {forecast_payload['summary']['confidence'].lower()}."
+        )
+    else:
+        answer += "No part-level forecast could be built from the current slice."
+    return answer, evidence[:5]
+
+
+def _ai_gateway_configured() -> bool:
+    return bool(os.getenv("PIO_AI_API_KEY") and (os.getenv("PIO_AI_BASE_URL") or os.getenv("LOVABLE_BASE_URL")))
+
+
+def _maybe_rewrite_with_llm(
+    question: str,
+    draft_answer: str,
+    evidence: list[str],
+    used_tools: list[str],
+    kpis: dict[str, Any],
+    anomaly_center: dict[str, Any],
+    forecast_payload: dict[str, Any] | None,
+    retrieved_context: list[dict[str, Any]],
+) -> dict[str, str] | None:
+    api_key = os.getenv("PIO_AI_API_KEY") or os.getenv("LOVABLE_API_KEY")
+    base_url = os.getenv("PIO_AI_BASE_URL") or os.getenv("LOVABLE_BASE_URL") or "https://ai.gateway.lovable.dev"
+    model = os.getenv("PIO_AI_MODEL") or os.getenv("LOVABLE_MODEL") or "openai/gpt-5-mini"
+    if not api_key:
+        return None
+
+    endpoint = base_url.rstrip("/")
+    if not endpoint.endswith("/v1"):
+        endpoint = f"{endpoint}/v1"
+    endpoint = f"{endpoint}/chat/completions"
+
+    system_prompt = (
+        "You are an automotive parts planning analyst. Rewrite the grounded answer clearly and professionally. "
+        "Use only the provided facts. Do not invent any values, causes, or dates. If evidence is weak, say so."
+    )
+    user_prompt = json.dumps(
+        {
+            "question": question,
+            "draft_answer": draft_answer,
+            "evidence": evidence,
+            "used_tools": used_tools,
+            "kpis": kpis,
+            "top_alert": anomaly_center.get("records", [])[:1],
+            "forecast_summary": forecast_payload.get("summary") if forecast_payload else None,
+            "retrieved_context": retrieved_context[:4],
+        },
+        ensure_ascii=False,
+    )
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    request = urllib_request.Request(
+        endpoint,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        answer = payload["choices"][0]["message"]["content"].strip()
+        if not answer:
+            return None
+        return {"answer": answer, "mode": "llm_assisted", "model": model}
+    except (TimeoutError, urllib_error.URLError, KeyError, IndexError, json.JSONDecodeError, OSError):
+        return None
 
 
 def _infer_start_year(session: WorkbookSession, exclude_sheet: str | None = None) -> int | None:
@@ -1921,6 +2614,11 @@ def _build_value_options(
 
 
 def _display_series_for_column(bundle: DatasetBundle, column: str) -> pd.Series:
+    if (
+        column == bundle.roles.get("brand")
+        and is_wide_month_matrix(bundle.dataframe, bundle.roles)
+    ):
+        return wide_brand_series(bundle.dataframe)
     if column == bundle.roles.get("model_year") and column in bundle.date_candidates:
         return bundle.date_candidates[column].dt.year.astype("Int64").astype(str)
     return bundle.dataframe[column].fillna("").astype(str)

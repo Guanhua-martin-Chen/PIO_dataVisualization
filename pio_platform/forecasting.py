@@ -21,6 +21,13 @@ class ForecastDiagnostics:
     adjusted_months: int = 0
 
 
+@dataclass(frozen=True)
+class ForecastModelSpec:
+    name: str
+    min_history: int
+    family: str
+
+
 def prepare_forecast_rows(
     df: pd.DataFrame,
     part_col: str,
@@ -66,12 +73,36 @@ def build_monthly_part_series(
     return pd.DataFrame({"month": series.index, "actual": series.values})
 
 
+MODEL_SPECS = [
+    ForecastModelSpec(name="naive_last", min_history=2, family="baseline"),
+    ForecastModelSpec(name="mean", min_history=2, family="baseline"),
+    ForecastModelSpec(name="weighted_moving_average", min_history=3, family="recent"),
+    ForecastModelSpec(name="trailing_12_mean", min_history=12, family="recent"),
+    ForecastModelSpec(name="trend_adjusted_moving_average", min_history=6, family="trend"),
+    ForecastModelSpec(name="damped_trend", min_history=6, family="trend"),
+    ForecastModelSpec(name="log_linear_trend", min_history=6, family="trend"),
+    ForecastModelSpec(name="seasonal_naive", min_history=18, family="seasonal"),
+    ForecastModelSpec(name="seasonal_mean", min_history=18, family="seasonal"),
+    ForecastModelSpec(name="croston_sba", min_history=8, family="intermittent"),
+]
+
+
 def candidate_models(history: list[float]) -> list[str]:
-    models = ["mean", "weighted_moving_average"]
-    if len(history) >= 6:
-        models.append("trend_adjusted_moving_average")
-    if len(history) >= 18:
-        models.append("seasonal_naive")
+    values = [max(float(value), 0.0) for value in history]
+    zero_share = _history_zero_share(values)
+    models: list[str] = []
+
+    for spec in MODEL_SPECS:
+        if len(values) < spec.min_history:
+            continue
+        if spec.family == "seasonal" and zero_share >= 0.45:
+            continue
+        if spec.family == "intermittent" and zero_share < 0.2:
+            continue
+        models.append(spec.name)
+
+    if not models:
+        return ["mean"]
     return models
 
 
@@ -261,6 +292,8 @@ def build_forecast_narrative(
     history: list[float],
     forecast_values: list[float],
     diagnostics: ForecastDiagnostics,
+    regime: dict[str, Any] | None = None,
+    forecast_risk: str | None = None,
 ) -> list[str]:
     if not history:
         return ["No usable history was found for the selected part."]
@@ -287,8 +320,20 @@ def build_forecast_narrative(
 
     if diagnostics.model_name == "seasonal_naive":
         notes.append("The baseline uses last year's same-month pattern because the series is long enough to expose seasonality.")
+    elif diagnostics.model_name == "seasonal_mean":
+        notes.append("The baseline averages the same calendar month from prior years, which is useful when seasonality exists but single-month repeats are noisy.")
+    elif diagnostics.model_name == "log_linear_trend":
+        notes.append("The baseline fits a log-space trend over recent months, which helps when demand is decaying or ramping non-linearly.")
+    elif diagnostics.model_name == "damped_trend":
+        notes.append("The baseline carries forward the recent trend, but damps it so the forecast does not overreact to one sharp month.")
     elif diagnostics.model_name == "trend_adjusted_moving_average":
         notes.append("The baseline blends recent demand with the short-term slope, so it reacts faster to acceleration or deceleration.")
+    elif diagnostics.model_name == "croston_sba":
+        notes.append("The baseline is designed for intermittent demand, separating demand size from demand timing and correcting for over-forecast bias.")
+    elif diagnostics.model_name == "trailing_12_mean":
+        notes.append("The baseline uses the trailing 12-month average to stabilize parts with repeatable annual demand but noisy recent months.")
+    elif diagnostics.model_name == "naive_last":
+        notes.append("The baseline carries the latest month forward because the short history favors a very low-complexity assumption.")
     elif diagnostics.model_name == "weighted_moving_average":
         notes.append("The baseline leans on the latest three months, with more weight on the most recent month.")
     else:
@@ -296,6 +341,11 @@ def build_forecast_narrative(
 
     if diagnostics.preprocessing == "cleaned" and diagnostics.adjusted_months > 0:
         notes.append(f"Anomaly softening was applied to {diagnostics.adjusted_months} month(s) because raw spikes or drops hurt backtest stability.")
+
+    if regime and regime.get("code") in {"structural_drop", "structural_ramp"}:
+        notes.append(f"The current series shape looks like a {regime['label'].lower()}, so the forecast should be treated as a short-horizon baseline.")
+    elif forecast_risk == "High":
+        notes.append("Recent behavior is unstable enough that planner review matters more than the point forecast itself.")
 
     notes.append(f"Model confidence is {diagnostics.confidence.lower()} based on history depth and backtest stability.")
     return notes[:4]
@@ -357,6 +407,212 @@ def build_watchlist(
         reverse=True,
     )
     return watchlist[:limit]
+
+
+def classify_forecast_tier(
+    diagnostics: ForecastDiagnostics,
+    regime: dict[str, Any],
+    forecast_risk: str,
+    history: list[float],
+) -> dict[str, Any]:
+    wape = diagnostics.wape
+    bias_abs = abs(diagnostics.bias) if diagnostics.bias is not None else None
+    history_months = len(history)
+    volatility = regime.get("volatility")
+
+    if (
+        history_months < 6
+        or forecast_risk == "High"
+        or regime["code"] in {"structural_drop", "structural_ramp", "sparse_history"}
+        or wape is None
+        or wape > 0.45
+    ):
+        return {
+            "label": "Do not auto-plan",
+            "code": "do_not_auto_plan",
+            "priority": 3,
+            "reason": "Series is structurally unstable, sparse, or too inaccurate for automatic planning.",
+        }
+
+    if (
+        history_months >= 12
+        and wape <= 0.22
+        and (bias_abs is None or bias_abs <= 0.18)
+        and regime["code"] == "stable"
+        and forecast_risk == "Low"
+        and (volatility is None or volatility <= 0.85)
+    ):
+        return {
+            "label": "Planner-ready",
+            "code": "planner_ready",
+            "priority": 1,
+            "reason": "Backtest error, bias, and regime shape are stable enough for baseline planning use.",
+        }
+
+    return {
+        "label": "Needs planner review",
+        "code": "needs_review",
+        "priority": 2,
+        "reason": "Forecast is directionally usable, but planner review is still needed before committing demand.",
+    }
+
+
+def forecast_reliability_score(
+    diagnostics: ForecastDiagnostics,
+    regime: dict[str, Any],
+    forecast_risk: str,
+    history: list[float],
+) -> float:
+    history_score = min(len(history) / 18.0, 1.0) * 22.0
+    wape_score = 0.0 if diagnostics.wape is None else max(0.0, 1.0 - min(diagnostics.wape, 1.0)) * 38.0
+    bias_abs = abs(diagnostics.bias) if diagnostics.bias is not None else 1.0
+    bias_score = max(0.0, 1.0 - min(bias_abs, 1.0)) * 14.0
+    confidence_score = {"High": 14.0, "Medium": 8.0, "Low": 2.0}.get(diagnostics.confidence, 0.0)
+    regime_penalty = {
+        "stable": 0.0,
+        "declining": 4.0,
+        "accelerating": 4.0,
+        "volatile": 7.0,
+        "structural_drop": 18.0,
+        "structural_ramp": 16.0,
+        "sparse_history": 15.0,
+    }.get(regime["code"], 6.0)
+    risk_penalty = {"Low": 0.0, "Medium": 7.0, "High": 18.0}.get(forecast_risk, 10.0)
+    score = history_score + wape_score + bias_score + confidence_score - regime_penalty - risk_penalty
+    return round(max(0.0, min(score, 100.0)), 1)
+
+
+def build_forecast_portfolio(
+    df: pd.DataFrame,
+    part_col: str,
+    qty_col: str,
+    date_series: pd.Series,
+    part_description_col: str | None = None,
+    scan_limit: int = 60,
+    top_n: int = 18,
+) -> dict[str, Any]:
+    working = df.copy()
+    working = working.assign(
+        __date=date_series.loc[working.index],
+        __part=working[part_col].fillna("").astype(str),
+        __qty=pd.to_numeric(working[qty_col], errors="coerce").fillna(0.0),
+    )
+    working = working[working["__date"].notna()]
+    if working.empty:
+        return {
+            "summary": {
+                "scannedParts": 0,
+                "plannerReadyCount": 0,
+                "reviewCount": 0,
+                "doNotAutoPlanCount": 0,
+                "plannerReadyShare": 0.0,
+            },
+            "records": [],
+            "recommendedPart": None,
+        }
+
+    part_totals = (
+        working.groupby("__part", dropna=True)["__qty"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    ranked_parts = part_totals.head(scan_limit).index.tolist()
+    total_ranked_qty = float(part_totals.head(scan_limit).sum()) or 0.0
+
+    records: list[dict[str, Any]] = []
+    for part_value in ranked_parts:
+        series_df = build_monthly_part_series(working, "__part", "__qty", working["__date"], part_value)
+        history = series_df["actual"].astype(float).tolist()
+        if len(history) < 4:
+            continue
+
+        model_name, _, diagnostics = select_best_model(history)
+        forecast_input, _ = preprocess_history(history, diagnostics.preprocessing)
+        next_forecast = forecast_history(forecast_input, 1, model_name=model_name)[0]
+        anomalies = detect_series_anomalies(series_df)
+        regime = classify_series_regime(history)
+        forecast_risk = _forecast_risk_label(diagnostics, regime, anomalies)
+        tier = classify_forecast_tier(diagnostics, regime, forecast_risk, history)
+        reliability_score = forecast_reliability_score(diagnostics, regime, forecast_risk, history)
+        latest_actual = float(history[-1]) if history else 0.0
+        delta_pct = _safe_pct(next_forecast - latest_actual, latest_actual)
+        total_qty = float(part_totals.get(part_value, 0.0))
+        qty_share = (total_qty / total_ranked_qty) if total_ranked_qty else 0.0
+
+        description = None
+        if part_description_col and part_description_col in working.columns:
+            desc_series = (
+                working.loc[working["__part"] == part_value, part_description_col]
+                .dropna()
+                .astype(str)
+            )
+            if not desc_series.empty:
+                description = desc_series.mode().iloc[0]
+
+        records.append(
+            {
+                "part": str(part_value),
+                "partDescription": description,
+                "historyMonths": len(history),
+                "latestActual": latest_actual,
+                "nextForecast": float(next_forecast),
+                "deltaPct": float(delta_pct) if delta_pct is not None else None,
+                "confidence": diagnostics.confidence,
+                "forecastRisk": forecast_risk,
+                "regime": regime["label"],
+                "regimeCode": regime["code"],
+                "wape": diagnostics.wape,
+                "bias": diagnostics.bias,
+                "modelName": diagnostics.model_name,
+                "preprocessing": diagnostics.preprocessing,
+                "reliabilityTier": tier["label"],
+                "reliabilityCode": tier["code"],
+                "reliabilityPriority": tier["priority"],
+                "reliabilityReason": tier["reason"],
+                "reliabilityScore": reliability_score,
+                "totalQuantity": total_qty,
+                "quantityShare": float(qty_share),
+            }
+        )
+
+    records.sort(
+        key=lambda item: (
+            item["reliabilityPriority"],
+            -item["reliabilityScore"],
+            -item["totalQuantity"],
+        )
+    )
+    recommended = next(
+        (
+            item["part"]
+            for item in records
+            if item["reliabilityCode"] == "planner_ready"
+        ),
+        None,
+    )
+    if not recommended:
+        recommended = next(
+            (
+                item["part"]
+                for item in records
+                if item["reliabilityCode"] == "needs_review"
+            ),
+            records[0]["part"] if records else None,
+        )
+
+    planner_ready_qty = sum(item["totalQuantity"] for item in records if item["reliabilityCode"] == "planner_ready")
+
+    return {
+        "summary": {
+            "scannedParts": len(records),
+            "plannerReadyCount": sum(1 for item in records if item["reliabilityCode"] == "planner_ready"),
+            "reviewCount": sum(1 for item in records if item["reliabilityCode"] == "needs_review"),
+            "doNotAutoPlanCount": sum(1 for item in records if item["reliabilityCode"] == "do_not_auto_plan"),
+            "plannerReadyShare": float(planner_ready_qty / total_ranked_qty) if total_ranked_qty else 0.0,
+        },
+        "records": records[:top_n],
+        "recommendedPart": recommended,
+    }
 
 
 def classify_series_regime(history: list[float]) -> dict[str, Any]:
@@ -664,6 +920,7 @@ def _forecast_risk_label(
     anomalies: list[dict[str, Any]],
     wholesale_signal: dict[str, Any] | None = None,
 ) -> str:
+    bias_abs = abs(diagnostics.bias) if diagnostics.bias is not None else None
     if (
         diagnostics.confidence == "Low"
         or (diagnostics.wape is not None and diagnostics.wape >= 0.55)
@@ -671,7 +928,20 @@ def _forecast_risk_label(
         or (wholesale_signal and wholesale_signal.get("unexplainedResidualPct") is not None and abs(wholesale_signal["unexplainedResidualPct"]) >= 45)
     ):
         return "High"
-    if anomalies or regime["code"] in {"declining", "accelerating", "volatile"} or diagnostics.confidence == "Medium":
+    if (
+        not anomalies
+        and regime["code"] == "stable"
+        and diagnostics.wape is not None
+        and diagnostics.wape <= 0.22
+        and (bias_abs is None or bias_abs <= 0.2)
+    ):
+        return "Low"
+    if (
+        anomalies
+        or regime["code"] in {"declining", "accelerating", "volatile"}
+        or (diagnostics.wape is not None and diagnostics.wape > 0.22)
+        or (bias_abs is not None and bias_abs > 0.2)
+    ):
         return "Medium"
     return "Low"
 
@@ -914,8 +1184,35 @@ def _relationship_strength(model_wape: float | None) -> str:
 
 
 def _forecast_next_value(values: list[float], model_name: str) -> float:
+    if model_name == "naive_last":
+        return values[-1]
+
     if model_name == "seasonal_naive" and len(values) >= 12:
         return values[-12]
+
+    if model_name == "seasonal_mean" and len(values) >= 12:
+        seasonal_values = values[-12::-12]
+        if seasonal_values:
+            return float(sum(seasonal_values) / len(seasonal_values))
+        return _weighted_recent_average(values[-3:])
+
+    if model_name == "trailing_12_mean":
+        window = values[-12:] if len(values) >= 12 else values
+        return float(sum(window) / len(window))
+
+    if model_name == "croston_sba":
+        return _croston_sba_forecast(values)
+
+    if model_name == "log_linear_trend":
+        recent = values[-6:] if len(values) >= 6 else values
+        if len(recent) < 3:
+            return _weighted_recent_average(recent)
+        x = np.arange(len(recent), dtype=float)
+        y = np.log1p(np.array(recent, dtype=float))
+        design = np.vstack([x, np.ones(len(x), dtype=float)]).T
+        slope, intercept = np.linalg.lstsq(design, y, rcond=None)[0]
+        projected = np.expm1(slope * len(recent) + intercept)
+        return max(0.0, float(projected))
 
     if model_name == "trend_adjusted_moving_average":
         recent = values[-6:] if len(values) >= 6 else values
@@ -924,6 +1221,21 @@ def _forecast_next_value(values: list[float], model_name: str) -> float:
         base = _weighted_recent_average(recent[-3:])
         trend = (recent[-1] - recent[0]) / max(len(recent) - 1, 1)
         return max(0.0, base + trend)
+
+    if model_name == "damped_trend":
+        recent = values[-8:] if len(values) >= 8 else values
+        if len(recent) <= 2:
+            return _weighted_recent_average(recent)
+        level = recent[0]
+        trend = recent[1] - recent[0]
+        alpha = 0.45
+        beta = 0.2
+        phi = 0.8
+        for value in recent[1:]:
+            prev_level = level
+            level = alpha * value + (1 - alpha) * (level + phi * trend)
+            trend = beta * (level - prev_level) + (1 - beta) * phi * trend
+        return max(0.0, level + phi * trend)
 
     if model_name == "weighted_moving_average":
         recent = values[-3:]
@@ -939,6 +1251,39 @@ def _weighted_recent_average(recent: list[float]) -> float:
     if len(recent) == 2:
         return recent[-1] * 0.65 + recent[-2] * 0.35
     return recent[-1] * 0.6 + recent[-2] * 0.3 + recent[-3] * 0.1
+
+
+def _croston_sba_forecast(values: list[float]) -> float:
+    recent = [max(float(value), 0.0) for value in values]
+    if not recent:
+        return 0.0
+    non_zero = [value for value in recent if value > 0]
+    if len(non_zero) < 2:
+        return _weighted_recent_average(recent[-3:]) if len(recent) >= 2 else recent[-1]
+
+    alpha = 0.2
+    demand = non_zero[0]
+    interval = 1.0
+    gap = 1
+
+    for value in recent[1:]:
+        if value > 0:
+            demand = alpha * value + (1 - alpha) * demand
+            interval = alpha * gap + (1 - alpha) * interval
+            gap = 1
+        else:
+            gap += 1
+
+    if interval <= 0:
+        return 0.0
+    return max(0.0, (1 - alpha / 2.0) * (demand / interval))
+
+
+def _history_zero_share(history: list[float]) -> float:
+    if not history:
+        return 0.0
+    zero_count = sum(1 for value in history if float(value) <= 0.0)
+    return zero_count / len(history)
 
 
 def _rolling_backtest(

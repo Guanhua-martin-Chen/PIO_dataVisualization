@@ -336,6 +336,19 @@ The frontend defaults to `http://127.0.0.1:8000`. Override via:
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
+### AI Analyst Environment
+
+The backend can optionally load a local project-root `.env` file for the AI Analyst. Keep real secrets only in `.env` or server environment variables, never in committed source files.
+
+```bash
+# .env
+PIO_AI_API_KEY=your-private-key
+PIO_AI_BASE_URL=https://ai.gateway.lovable.dev
+PIO_AI_MODEL=openai/gpt-5-mini
+```
+
+If no AI key is configured, the AI Analyst still works in `grounded_tools` mode using trusted anomaly and forecast outputs without external LLM rewriting.
+
 ---
 
 ## API Reference
