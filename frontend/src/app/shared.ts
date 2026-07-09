@@ -22,6 +22,58 @@ export type LeaderMetric = {
   metric: "Revenue" | "Quantity";
 };
 
+export type EdaDashboardPayload = {
+  overview: {
+    rowCount: number;
+    timeRange: { min: string | null; max: string | null };
+    modelCount: number;
+    modelCodeCount: number;
+    partCount: number;
+    brandCount: number;
+    totalRevenue: number | null;
+    totalQuantity: number | null;
+  };
+  dataQuality: {
+    missing: Array<{ field: string; column: string | null; missing: number; missingPct: number }>;
+    outliers: {
+      negativeRevenueRows: number;
+      negativeQuantityRows: number;
+      zeroQuantityRows: number;
+      unitPriceOutlierRows: number;
+      unitPriceP01: number | null;
+      unitPriceP99: number | null;
+    };
+    partDescriptionIssues: Array<{
+      partNumber: string;
+      issueType: "description_mismatch" | "format_warning";
+      descriptionCount: number;
+      variantCount: number;
+      descriptions: string[];
+      rows: number;
+    }>;
+  };
+  monthly: Array<{
+    month: string;
+    pioRevenue: number;
+    pioQuantity: number;
+    wholesaleUnits: number | null;
+    pnvw: number | null;
+  }>;
+  rankings: {
+    topModels: Array<{ name: string; value: number }>;
+    topParts: Array<{ name: string; value: number }>;
+    topBrands: Array<{ name: string; value: number }>;
+  };
+  relationship: {
+    revenueWholesaleCorrelation: number | null;
+    matchedModelCodes: number;
+    salesModelCodes: number;
+    wholesaleModelCodes: number;
+    modelCodeCoveragePct: number | null;
+    unmatchedSalesModelCodes: Array<{ value: string; rows: number[] }>;
+  };
+};
+
 export type WorkspacePayload = {
   workbook: WorkbookMeta;
   sheetName: string;
@@ -97,6 +149,7 @@ export type WorkspacePayload = {
     modelYear: Array<{ label: string; value: string; count: number }>;
     part: Array<{ label: string; value: string; count: number }>;
   };
+  edaDashboard?: EdaDashboardPayload;
 };
 
 export type TableState = {

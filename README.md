@@ -345,6 +345,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 | `GET` | `/api/health` | Health check |
 | `POST` | `/api/workbooks/upload` | Upload an Excel file; returns the full workspace payload |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}` | Fetch paginated sheet data with filter and sort support |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}?include_eda_dashboard=true` | Fetch the workspace payload with the optional EDA dashboard diagnostics |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}/pivot` | Server-side pivot aggregation (rows / cols / measure / agg + filters) |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}/export.csv` | Export the current filtered slice as CSV |
 
@@ -373,6 +374,34 @@ V1 is the data-preparation and field-classification foundation. Planned modules:
 - [ ] **Forecast Center** — generate next-month and next-year demand forecasts
 - [ ] **Penetration Analysis** — calculate part fitment penetration against vehicle wholesale data
 - [ ] **Inventory Recommendations** — produce replenishment suggestions from forecast output
+
+---
+
+## EDA & Visual Charts Update / EDA 与可视化图表更新
+
+### EDA Dashboard / 探索性数据分析
+
+- **Data quality diagnostics / 数据质量诊断**: checks missing key fields, negative revenue, negative installation quantity, zero installation quantity, and unit-price p01 / p99 outliers.
+- **Part number vs description discrepancies / 零件号与描述差异检查**: checks whether one `PIS_PNO` maps to multiple `Part Description` values. Case-only or spacing-only differences are shown as format warnings, not true description mismatches.
+- **Top brand revenue / 品牌收入排行**: groups by `PIS_CMP_KND` and sums `SumOfPIS_CRP_CFM_PRI`.
+- **Wholesale relationship check / Wholesale 关联检查**: links `PIO_Sales_Data.PIS_SERI` to `Vehicle_Wholesale_Data.Model Code`, then lists unmatched `PIS_SERI` samples with source Excel row numbers.
+- **PNVW definition / PNVW 计算口径**: `PNVW = SumOfPIS_CRP_CFM_PRI / wholesale units`. The numerator uses dollar revenue from `SumOfPIS_CRP_CFM_PRI`, not installation quantity from `SumOfPIS_INST_QT`.
+
+### Visual Charts Additions / 可视化图表补充
+
+- Existing charts remain in Visual Charts: `Monthly installation quantity`, `Monthly revenue`, `Top vehicle models by revenue`, and `Top parts by revenue`.
+- Added `Wholesale monthly trend`: monthly wholesale units aggregated from the wholesale worksheet.
+- Added `PNVW monthly trend`: monthly `SumOfPIS_CRP_CFM_PRI / wholesale units`.
+- Wholesale and PNVW trend charts use complete months only. For example, if PIO sales data includes an incomplete June, these trend charts stop at May.
+
+### Calculation Notes / 计算说明
+
+- `Monthly installation quantity` = month-level sum of `SumOfPIS_INST_QT`.
+- `Monthly revenue` = month-level sum of `SumOfPIS_CRP_CFM_PRI`.
+- `Top parts by revenue` = group by part description or part number, then sum `SumOfPIS_CRP_CFM_PRI`.
+- `Top vehicle models by revenue` = group by `Model`, then sum `SumOfPIS_CRP_CFM_PRI`.
+- `Wholesale monthly trend` = group matched wholesale rows by month, then sum wholesale units.
+- `PNVW monthly trend` = monthly `SumOfPIS_CRP_CFM_PRI` divided by monthly wholesale units.
 
 ---
 
