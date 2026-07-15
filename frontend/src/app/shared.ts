@@ -74,6 +74,12 @@ export type EdaDashboardPayload = {
     salesModelCodes: number;
     wholesaleModelCodes: number;
     modelCodeCoveragePct: number | null;
+    matchedModelNames: number;
+    salesModelNames: number;
+    wholesaleModelNames: number;
+    modelNameCoveragePct: number | null;
+    ambiguousSalesModelCodes: Array<{ value: string; models: string[] }>;
+    ambiguousWholesaleModelCodes: Array<{ value: string; models: string[] }>;
     unmatchedSalesModelCodes: Array<{ value: string; rows: number[] }>;
   };
 };

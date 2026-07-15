@@ -397,7 +397,7 @@ V1 is the data-preparation and field-classification foundation. Planned modules:
 - **Data quality diagnostics / 数据质量诊断**: checks missing key fields, negative revenue, negative installation quantity, zero installation quantity, and unit-price p01 / p99 outliers.
 - **Part number vs description discrepancies / 零件号与描述差异检查**: checks whether one `PIS_PNO` maps to multiple `Part Description` values. Case-only or spacing-only differences are shown as format warnings, not true description mismatches.
 - **Top brand revenue / 品牌收入排行**: groups by `PIS_CMP_KND` and sums `SumOfPIS_CRP_CFM_PRI`.
-- **Wholesale relationship check / Wholesale 关联检查**: links `PIO_Sales_Data.PIS_SERI` to `Vehicle_Wholesale_Data.Model Code`, then lists unmatched `PIS_SERI` samples with source Excel row numbers.
+- **Wholesale relationship check / Wholesale 关联检查**: matches normalized `Model` names first, reports model-name coverage and shared model codes, and uses `PIS_SERI` / `Model Code` only as a fallback when the wholesale code identifies one model uniquely.
 - **PNVW definition / PNVW 计算口径**: `PNVW = SumOfPIS_CRP_CFM_PRI / wholesale units`. The numerator uses dollar revenue from `SumOfPIS_CRP_CFM_PRI`, not installation quantity from `SumOfPIS_INST_QT`.
 
 ### Visual Charts Additions / 可视化图表补充

@@ -1074,12 +1074,13 @@ def build_wholesale_signal_model(
     if grouped.empty:
         return None
 
-    grouped[model_col] = grouped[model_col].fillna("").astype(str).str.strip()
+    grouped["__model_key"] = _normalize_model_key(grouped[model_col])
+    wholesale_working = wholesale_long.copy()
+    wholesale_working["__model_key"] = _normalize_model_key(wholesale_working["model"])
     merged = grouped.merge(
-        wholesale_long,
+        wholesale_working,
         how="left",
-        left_on=["month", model_col],
-        right_on=["month", "model"],
+        on=["month", "__model_key"],
     )
     merged["wholesale"] = pd.to_numeric(merged["wholesale"], errors="coerce")
     merged = merged[merged["wholesale"].notna()].copy()
@@ -1159,6 +1160,16 @@ def build_wholesale_signal_model(
         "wholesaleContribution": float(latest["wholesale_effect"]) if pd.notna(latest["wholesale_effect"]) else None,
         "relationshipStrength": _relationship_strength(float(model_wape) if model_wape is not None else None),
     }
+
+
+def _normalize_model_key(series: pd.Series) -> pd.Series:
+    return (
+        series.fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(r"\s+", " ", regex=True)
+    )
 
 
 def _design_matrix(frame: pd.DataFrame) -> np.ndarray:

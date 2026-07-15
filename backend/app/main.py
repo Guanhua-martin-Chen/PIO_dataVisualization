@@ -1197,12 +1197,42 @@ def _build_eda_relationship(
     matched = sales_codes & wholesale_codes
     coverage = round(len(matched) / len(sales_codes) * 100, 2) if sales_codes else None
 
+    model_col = columns.get("model")
+    sales_model_names: set[str] = set()
+    wholesale_model_names: set[str] = set()
+    ambiguous_sales_codes: list[dict[str, Any]] = []
+    ambiguous_wholesale_codes: list[dict[str, Any]] = []
+    if model_col and model_col in df.columns:
+        sales_model_names = set(_eda_normalize_model_name_series(df[model_col]))
+        if model_code_col and model_code_col in df.columns:
+            ambiguous_sales_codes = _eda_ambiguous_model_codes(
+                pd.DataFrame({"code": df[model_code_col], "model": df[model_col]})
+            )
+    if not wholesale_long.empty and "model" in wholesale_long.columns:
+        wholesale_model_names = set(_eda_normalize_model_name_series(wholesale_long["model"]))
+        if "modelCode" in wholesale_long.columns:
+            ambiguous_wholesale_codes = _eda_ambiguous_model_codes(
+                pd.DataFrame({"code": wholesale_long["modelCode"], "model": wholesale_long["model"]})
+            )
+    matched_model_names = sales_model_names & wholesale_model_names
+    model_name_coverage = (
+        round(len(matched_model_names) / len(sales_model_names) * 100, 2)
+        if sales_model_names
+        else None
+    )
+
     return {
         "revenueWholesaleCorrelation": corr,
         "matchedModelCodes": len(matched),
         "salesModelCodes": len(sales_codes),
         "wholesaleModelCodes": len(wholesale_codes),
         "modelCodeCoveragePct": coverage,
+        "matchedModelNames": len(matched_model_names),
+        "salesModelNames": len(sales_model_names),
+        "wholesaleModelNames": len(wholesale_model_names),
+        "modelNameCoveragePct": model_name_coverage,
+        "ambiguousSalesModelCodes": ambiguous_sales_codes,
+        "ambiguousWholesaleModelCodes": ambiguous_wholesale_codes,
         "unmatchedSalesModelCodes": [
             {"value": value, "rows": code_rows.get(value, [])}
             for value in sorted(sales_codes - wholesale_codes)[:10]
@@ -1213,6 +1243,83 @@ def _build_eda_relationship(
 def _eda_normalize_code_series(series: pd.Series) -> list[str]:
     values = series.dropna().astype(str).str.strip().str.upper()
     return [value for value in values.unique().tolist() if value]
+
+
+def _eda_normalize_model_name_series(series: pd.Series) -> list[str]:
+    values = (
+        series.dropna()
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(r"\s+", " ", regex=True)
+    )
+    return [value for value in values.unique().tolist() if value]
+
+
+def _eda_ambiguous_model_codes(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    working = frame.copy()
+    working["code"] = working["code"].fillna("").astype(str).str.strip().str.upper()
+    working["model"] = (
+        working["model"].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+    )
+    working = working[(working["code"] != "") & (working["model"] != "")].drop_duplicates()
+    if working.empty:
+        return []
+    grouped = working.groupby("code")["model"].agg(lambda values: sorted(set(values)))
+    return [
+        {"value": str(code), "models": models}
+        for code, models in grouped.items()
+        if len(models) > 1
+    ]
+
+
+def _filter_wholesale_for_sales_slice(
+    sales_df: pd.DataFrame,
+    wholesale_long: pd.DataFrame,
+    model_col: str | None,
+    model_code_col: str | None,
+) -> pd.DataFrame:
+    """Match a filtered sales slice without treating a shared model code as a unique vehicle key."""
+    if wholesale_long.empty or not model_col or model_col not in sales_df.columns or "model" not in wholesale_long.columns:
+        return wholesale_long
+
+    sales = pd.DataFrame({"model": sales_df[model_col]})
+    if model_code_col and model_code_col in sales_df.columns:
+        sales["code"] = sales_df[model_code_col]
+    else:
+        sales["code"] = ""
+    sales["modelKey"] = (
+        sales["model"].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+    )
+    sales["codeKey"] = sales["code"].fillna("").astype(str).str.strip().str.upper()
+    sales = sales[(sales["modelKey"] != "")].drop_duplicates()
+    if sales.empty:
+        return wholesale_long.iloc[0:0].copy()
+
+    wholesale = wholesale_long.copy()
+    wholesale["__modelKey"] = (
+        wholesale["model"].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+    )
+    wholesale["__codeKey"] = (
+        wholesale.get("modelCode", pd.Series("", index=wholesale.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    sales_names = set(sales["modelKey"])
+    matched = wholesale["__modelKey"].isin(sales_names)
+
+    unmatched_sales = sales[~sales["modelKey"].isin(set(wholesale["__modelKey"]))]
+    if not unmatched_sales.empty:
+        code_cardinality = wholesale.groupby("__codeKey")["__modelKey"].nunique()
+        unique_codes = set(code_cardinality[code_cardinality == 1].index) - {""}
+        safe_fallback_codes = set(unmatched_sales["codeKey"]) & unique_codes
+        if safe_fallback_codes:
+            matched |= wholesale["__codeKey"].isin(safe_fallback_codes)
+
+    return wholesale.loc[matched].drop(columns=["__modelKey", "__codeKey"])
 
 
 def _eda_normalized_code_frame(df: pd.DataFrame, column: str, profile: dict[str, Any]) -> pd.DataFrame:
@@ -1523,13 +1630,12 @@ def _build_wholesale_chart_payloads(
     if wholesale_long.empty or revenue is None or date_series.dropna().empty:
         return {}
 
-    model_code_col = columns.get("model_code")
-    if model_code_col and model_code_col in filtered_df.columns:
-        sales_codes = set(_eda_normalize_code_series(filtered_df[model_code_col]))
-        if sales_codes:
-            wholesale_long = wholesale_long[
-                wholesale_long["modelCode"].fillna("").astype(str).str.strip().str.upper().isin(sales_codes)
-            ]
+    wholesale_long = _filter_wholesale_for_sales_slice(
+        filtered_df,
+        wholesale_long,
+        model_col=columns.get("model"),
+        model_code_col=columns.get("model_code"),
+    )
     if wholesale_long.empty:
         return {}
 

@@ -932,7 +932,34 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     <span className="health-label">Wholesale model codes</span>
                     <strong>{eda.relationship.wholesaleModelCodes}</strong>
                   </div>
+                  <div>
+                    <span className="health-label">Model-name coverage</span>
+                    <strong>
+                      {eda.relationship.modelNameCoveragePct === null
+                        ? "N/A"
+                        : `${eda.relationship.modelNameCoveragePct.toFixed(2)}%`}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="health-label">Ambiguous model codes</span>
+                    <strong>
+                      {eda.relationship.ambiguousSalesModelCodes.length} sales /{" "}
+                      {eda.relationship.ambiguousWholesaleModelCodes.length} wholesale
+                    </strong>
+                  </div>
                 </div>
+                {eda.relationship.ambiguousWholesaleModelCodes.length ? (
+                  <Alert
+                    style={{ marginTop: 12 }}
+                    type="warning"
+                    showIcon
+                    message="Model Code is not a unique vehicle key"
+                    description={eda.relationship.ambiguousWholesaleModelCodes
+                      .slice(0, 5)
+                      .map((item) => `${item.value}: ${item.models.join(", ")}`)
+                      .join(" · ")}
+                  />
+                ) : null}
                 {eda.relationship.unmatchedSalesModelCodes.length ? (
                   <Alert
                     style={{ marginTop: 12 }}
