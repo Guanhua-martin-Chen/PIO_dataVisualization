@@ -87,13 +87,15 @@ MODEL_SPECS = [
 ]
 
 
-def candidate_models(history: list[float]) -> list[str]:
+def candidate_models(history: list[float], use_seasonality: bool = True) -> list[str]:
     values = [max(float(value), 0.0) for value in history]
     zero_share = _history_zero_share(values)
     models: list[str] = []
 
     for spec in MODEL_SPECS:
         if len(values) < spec.min_history:
+            continue
+        if spec.family == "seasonal" and not use_seasonality:
             continue
         if spec.family == "seasonal" and zero_share >= 0.45:
             continue
@@ -209,8 +211,11 @@ def backtest_history(
     )
 
 
-def select_best_model(history: list[float]) -> tuple[str, list[dict[str, Any]], ForecastDiagnostics]:
-    models = candidate_models(history)
+def select_best_model(
+    history: list[float],
+    use_seasonality: bool = True,
+) -> tuple[str, list[dict[str, Any]], ForecastDiagnostics]:
+    models = candidate_models(history, use_seasonality=use_seasonality)
     scores: list[dict[str, Any]] = []
     _, adjusted_points = clean_training_history(history)
     preprocessing_modes = ["raw"]

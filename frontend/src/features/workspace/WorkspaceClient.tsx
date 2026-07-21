@@ -48,6 +48,8 @@ import {
   AnomalyCenterPayload,
   API_BASE_URL,
   ForecastPayload,
+  HierarchicalForecastPayload,
+  MonthlyFactsPayload,
   PivotPayload,
   WorkbookMeta,
   WorkspacePayload,
@@ -135,6 +137,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [chartData, setChartData] = useState<WorkspacePayload | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [edaLoading, setEdaLoading] = useState(false);
+  const [monthlyFacts, setMonthlyFacts] = useState<MonthlyFactsPayload | null>(null);
+  const [monthlyFactsLoading, setMonthlyFactsLoading] = useState(false);
   const [forecastFilterState, setForecastFilterState] = useState<TableState>(defaultTableState);
   const [anomalyData, setAnomalyData] = useState<AnomalyCenterPayload | null>(null);
   const [anomalyLoading, setAnomalyLoading] = useState(false);
@@ -142,6 +146,14 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [forecastData, setForecastData] = useState<ForecastPayload | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastView, setForecastView] = useState("detail");
+  const [hierarchicalForecast, setHierarchicalForecast] = useState<HierarchicalForecastPayload | null>(null);
+  const [hierarchicalForecastLoading, setHierarchicalForecastLoading] = useState(false);
+  const [hierarchyLevel, setHierarchyLevel] = useState<"brand" | "model" | "model_accessory">("brand");
+  const [hierarchyModelStrategy, setHierarchyModelStrategy] = useState("auto");
+  const [useWorkingDays, setUseWorkingDays] = useState(true);
+  const [useSeasonality, setUseSeasonality] = useState(true);
+  const [tariffImpactPct, setTariffImpactPct] = useState(0);
+  const [minimumMonthlyVolume, setMinimumMonthlyVolume] = useState(5);
   const [analystQuestion, setAnalystQuestion] = useState("");
   const [analystAnswer, setAnalystAnswer] = useState<AnalystPayload | null>(null);
   const [analystLoading, setAnalystLoading] = useState(false);
@@ -388,6 +400,53 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       messageApi.error(err instanceof Error ? err.message : "Failed to load forecast view.");
     } finally {
       setForecastLoading(false);
+    }
+  }
+
+  async function loadMonthlyFacts(sheetName: string, state: TableState, page = 1, pageSize = 100) {
+    const params = buildWorkspaceParams({ ...state, page, pageSize });
+    setMonthlyFactsLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/monthly-facts?${params.toString()}`
+      );
+      if (!response.ok) {
+        throw new Error((await response.json()).detail ?? "Failed to build monthly facts.");
+      }
+      setMonthlyFacts((await response.json()) as MonthlyFactsPayload);
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "Failed to build monthly facts.");
+    } finally {
+      setMonthlyFactsLoading(false);
+    }
+  }
+
+  async function loadHierarchicalForecast(
+    sheetName: string,
+    state: TableState,
+    level = hierarchyLevel,
+  ) {
+    const params = buildWorkspaceParams({ ...state, page: 1 });
+    params.set("level", level);
+    params.set("horizon", String(forecastHorizon));
+    params.set("use_working_days", String(useWorkingDays));
+    params.set("use_seasonality", String(useSeasonality));
+    params.set("tariff_impact_pct", String(tariffImpactPct));
+    params.set("min_monthly_volume", String(minimumMonthlyVolume));
+    params.set("model_strategy", level === "model_accessory" ? "auto" : hierarchyModelStrategy);
+    setHierarchicalForecastLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/hierarchical-forecast?${params.toString()}`
+      );
+      if (!response.ok) {
+        throw new Error((await response.json()).detail ?? "Failed to run hierarchical forecast.");
+      }
+      setHierarchicalForecast((await response.json()) as HierarchicalForecastPayload);
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "Failed to run hierarchical forecast.");
+    } finally {
+      setHierarchicalForecastLoading(false);
     }
   }
 
@@ -638,6 +697,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     setDataSubTab(key);
     if (key === "eda" && workspace && !workspace.edaDashboard) {
       loadWorkspaceData(workspace.sheetName, tableState, true, true);
+    }
+    if (key === "monthly-facts" && workspace) {
+      loadMonthlyFacts(workspace.sheetName, tableState, 1, monthlyFacts?.pageSize ?? 100);
     }
   }
 
@@ -990,6 +1052,62 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
           <Row gutter={[18, 18]}>
             <Col xs={24}>
+              <Card className="content-card" title="Model entity mapping and lifecycle">
+                <Paragraph className="workspace-copy">
+                  Vehicle entities are keyed by brand and normalized model name. Model code is retained only as an attribute,
+                  so variants sharing a code remain distinct. Lifecycle status is calculated from positive PIO activity rather
+                  than manually assigned.
+                </Paragraph>
+                <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+                  <Col xs={12} md={6}>
+                    <Statistic title="Model entities" value={eda.modelEntities.count} />
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title={`Discontinued through ${eda.modelLifecycle.cutoffYear}`} value={eda.modelLifecycle.discontinuedCount} />
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title="Reintroduced" value={eda.modelLifecycle.reintroducedCount} />
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Statistic title="Lifecycle as of" value={eda.modelLifecycle.asOfMonth ?? "N/A"} />
+                  </Col>
+                </Row>
+                <Table
+                  size="small"
+                  rowKey="entityKey"
+                  pagination={{ pageSize: 12, hideOnSinglePage: true }}
+                  columns={[
+                    { title: "Model", dataIndex: "modelName", key: "modelName", fixed: "left" as const },
+                    { title: "Brand", dataIndex: "brand", key: "brand" },
+                    {
+                      title: "Model code(s)",
+                      dataIndex: "modelCodes",
+                      key: "modelCodes",
+                      render: (values: string[]) => values.length ? values.join(", ") : "-",
+                    },
+                    {
+                      title: "Status",
+                      dataIndex: "statusCode",
+                      key: "statusCode",
+                      render: (value: "active" | "inactive" | "discontinued" | "reintroduced", record) => (
+                        <Tag color={value === "discontinued" ? "red" : value === "reintroduced" ? "blue" : value === "inactive" ? "gold" : "green"}>
+                          {record.status}
+                        </Tag>
+                      ),
+                    },
+                    { title: "Last positive", dataIndex: "lastPositiveMonth", key: "lastPositiveMonth" },
+                    { title: "Restarted", dataIndex: "reintroducedMonth", key: "reintroducedMonth", render: (value: string | null) => value ?? "-" },
+                    { title: "Code-derived evidence", dataIndex: "evidence", key: "evidence", ellipsis: true },
+                  ]}
+                  dataSource={eda.modelLifecycle.records}
+                  scroll={{ x: 1050 }}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          <Row gutter={[18, 18]}>
+            <Col xs={24}>
               <Card className="content-card" title="Part number vs description discrepancies">
                 <Paragraph className="workspace-copy">
                   This check finds cases where one part number maps to multiple part descriptions. It helps catch naming drift,
@@ -1032,6 +1150,85 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           </Row>
         </div>
       </Spin>
+    );
+  }
+
+  function renderMonthlyFacts() {
+    if (!monthlyFacts) {
+      return (
+        <Card className="content-card">
+          <Spin spinning={monthlyFactsLoading}>
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Open this tab to build the unified 2023–2026 monthly fact table." />
+          </Spin>
+        </Card>
+      );
+    }
+    return (
+      <div className="tab-stack">
+        <Alert
+          type="info"
+          showIcon
+          message="Forecasting source of truth"
+          description={`One row represents ${monthlyFacts.summary.grain}. Wholesale units are a model-month reference and must not be summed across accessories.`}
+        />
+        <Row gutter={[18, 18]}>
+          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Fact rows" value={monthlyFacts.summary.rowCount} /></Card></Col>
+          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Months" value={monthlyFacts.summary.monthCount} /></Card></Col>
+          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Model entities" value={monthlyFacts.summary.modelCount} /></Card></Col>
+          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Accessories" value={monthlyFacts.summary.partCount} /></Card></Col>
+        </Row>
+        <Row gutter={[18, 18]}>
+          <Col xs={24} md={12}>
+            <Card className="content-card" title="Coverage">
+              <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                <div><span className="health-label">Period</span><strong>{monthlyFacts.summary.minMonth} to {monthlyFacts.summary.maxMonth}</strong></div>
+                <div><span className="health-label">Working Days</span><strong>{monthlyFacts.summary.workingDaysCoveragePct.toFixed(1)}%</strong></div>
+                <div><span className="health-label">Wholesale reference</span><strong>{monthlyFacts.summary.wholesaleCoveragePct.toFixed(1)}%</strong></div>
+                <div><span className="health-label">PIO revenue</span><strong>{formatMetric(monthlyFacts.summary.totalRevenue, true)}</strong></div>
+              </div>
+            </Card>
+          </Col>
+          <Col xs={24} md={12}>
+            <Card className="content-card" title="Why this table exists">
+              <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
+                It converts transaction-like PIO rows and wide wholesale sheets into one auditable monthly grain used by brand,
+                model, and model-accessory forecasts. Working Days and lifecycle status are joined once here so every model uses
+                identical inputs.
+              </Paragraph>
+            </Card>
+          </Col>
+        </Row>
+        <Card className="content-card" title="Unified monthly facts">
+          <Table
+            size="small"
+            rowKey={(record) => `${record.month}-${record.entityKey}-${record.partNumber}`}
+            loading={monthlyFactsLoading}
+            dataSource={monthlyFacts.rows}
+            columns={[
+              { title: "Month", dataIndex: "month", key: "month", fixed: "left" as const },
+              { title: "Brand", dataIndex: "brand", key: "brand" },
+              { title: "Model", dataIndex: "modelName", key: "modelName" },
+              { title: "Accessory", dataIndex: "partNumber", key: "partNumber" },
+              { title: "Description", dataIndex: "partDescription", key: "partDescription", ellipsis: true },
+              { title: "Lifecycle", dataIndex: "lifecycleStatus", key: "lifecycleStatus" },
+              { title: "PIO qty", dataIndex: "installationQuantity", key: "installationQuantity", align: "right" as const, render: (value: number) => formatMetric(value) },
+              { title: "PIO revenue", dataIndex: "pioRevenue", key: "pioRevenue", align: "right" as const, render: (value: number) => formatMetric(value, true) },
+              { title: "Wholesale", dataIndex: "wholesaleUnits", key: "wholesaleUnits", align: "right" as const, render: (value: number | null) => value === null ? "-" : formatMetric(value) },
+              { title: "PNVW", dataIndex: "pnvw", key: "pnvw", align: "right" as const, render: (value: number | null) => value === null ? "-" : formatOptionalNumber(value, true) },
+              { title: "Working days", dataIndex: "workingDays", key: "workingDays", align: "right" as const, render: (value: number | null) => value ?? "-" },
+              { title: "Qty/day", dataIndex: "quantityPerWorkingDay", key: "quantityPerWorkingDay", align: "right" as const, render: (value: number | null) => value === null ? "-" : value.toFixed(2) },
+            ]}
+            pagination={{
+              current: monthlyFacts.page,
+              pageSize: monthlyFacts.pageSize,
+              total: monthlyFacts.totalRows,
+              showSizeChanger: true,
+              onChange: (page, pageSize) => workspace && loadMonthlyFacts(workspace.sheetName, tableState, page, pageSize),
+            }}
+            scroll={{ x: 1500 }}
+          />
+        </Card>
+      </div>
     );
   }
 
@@ -1492,6 +1689,16 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   </span>
                 ),
                 children: renderEdaDashboard(),
+              },
+              {
+                key: "monthly-facts",
+                label: (
+                  <span className="workspace-subtab-label">
+                    <strong>Monthly Facts</strong>
+                    <small>2023–2026</small>
+                  </span>
+                ),
+                children: renderMonthlyFacts(),
               },
               {
                 key: "pivot",
@@ -2343,7 +2550,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                     </div>
                                   </Col>
                                   <Col xs={24} xl={8}>
-                                    <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)", height: "100%" }}>
+                                    <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)", height: "100%" }}>
                                       <div style={{ fontWeight: 700, marginBottom: 10 }}>Evidence trail</div>
                                       <div className="summary-stack">
                                         {selectedAnomalyRecord.evidence.map((line) => (
@@ -2357,7 +2564,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                   </Col>
                                   <Col xs={24} xl={8}>
                                     <div style={{ display: "grid", gap: 16 }}>
-                                      <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)" }}>
+                                      <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)" }}>
                                         <div style={{ fontWeight: 700, marginBottom: 10 }}>Wholesale-linked model</div>
                                         {selectedAnomalyRecord.wholesaleSignal ? (
                                           <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -2390,7 +2597,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                           <Text type="secondary">No wholesale-linked model could be fit for this part with the current workbook structure.</Text>
                                         )}
                                       </Card>
-                                      <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)" }}>
+                                      <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)" }}>
                                         <div style={{ fontWeight: 700, marginBottom: 10 }}>Brand drivers</div>
                                         {selectedAnomalyRecord.brandDrivers.length ? (
                                           <div className="summary-stack">
@@ -2407,7 +2614,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                           <Text type="secondary">No brand-level shift surfaced in this slice.</Text>
                                         )}
                                       </Card>
-                                      <Card bordered={false} style={{ background: "rgba(248, 250, 255, 0.82)" }}>
+                                      <Card variant="borderless" style={{ background: "rgba(248, 250, 255, 0.82)" }}>
                                         <div style={{ fontWeight: 700, marginBottom: 10 }}>Model drivers</div>
                                         {selectedAnomalyRecord.modelDrivers.length ? (
                                           <div className="summary-stack">
@@ -2468,13 +2675,19 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               style={{ width: 180 }}
                               value={forecastView}
                               options={[
+                                { label: "Hierarchy", value: "hierarchy" },
                                 { label: "Detail", value: "detail" },
                                 { label: "Leaderboard", value: "leaderboard" },
                                 { label: "Series Table", value: "series" },
                                 { label: "Interpretation", value: "interpretation" },
                                 { label: "Signals", value: "signals" },
                               ]}
-                              onChange={setForecastView}
+                              onChange={(value) => {
+                                setForecastView(value);
+                                if (value === "hierarchy" && workspace) {
+                                  loadHierarchicalForecast(workspace.sheetName, forecastFilterState);
+                                }
+                              }}
                             />
                             <Button onClick={syncForecastFromTable}>Use Data Table filters</Button>
                             <Button onClick={resetForecastFilters}>Reset Forecast filters</Button>
@@ -2615,6 +2828,161 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                             </Card>
                           </Col>
                         </Row>
+
+                        {forecastView === "hierarchy" ? (
+                          <Spin spinning={hierarchicalForecastLoading}>
+                            <div className="tab-stack">
+                              <Card className="content-card" title="Hierarchical forecast controls">
+                                <div className="toolbar-grid">
+                                  <Select
+                                    value={hierarchyLevel}
+                                    options={[
+                                      { label: "Brand", value: "brand" },
+                                      { label: "Model", value: "model" },
+                                      { label: "Model × accessory", value: "model_accessory" },
+                                    ]}
+                                    onChange={setHierarchyLevel}
+                                  />
+                                  {hierarchyLevel !== "model_accessory" ? (
+                                    <Select
+                                      value={hierarchyModelStrategy}
+                                      onChange={setHierarchyModelStrategy}
+                                      options={[
+                                        { label: "Auto: baselines + drivers", value: "auto" },
+                                        { label: "Auto: statistical baselines only", value: "baseline_auto" },
+                                        { label: "Driver regression (OLS)", value: "driver_adjusted_regression" },
+                                        { label: "Naive last", value: "naive_last" },
+                                        { label: "Mean", value: "mean" },
+                                        { label: "Weighted moving average", value: "weighted_moving_average" },
+                                        { label: "Trailing 12-month mean", value: "trailing_12_mean" },
+                                        { label: "Trend-adjusted moving average", value: "trend_adjusted_moving_average" },
+                                        { label: "Damped trend", value: "damped_trend" },
+                                        { label: "Log-linear trend", value: "log_linear_trend" },
+                                        { label: "Seasonal naive", value: "seasonal_naive" },
+                                        { label: "Seasonal mean", value: "seasonal_mean" },
+                                        { label: "Croston SBA", value: "croston_sba" },
+                                        { label: "LightGBM (future ML)", value: "lightgbm", disabled: true },
+                                        { label: "XGBoost (future ML)", value: "xgboost", disabled: true },
+                                      ]}
+                                    />
+                                  ) : null}
+                                  <Select
+                                    value={useWorkingDays}
+                                    options={[{ label: "Working Days on", value: true }, { label: "Working Days off", value: false }]}
+                                    onChange={setUseWorkingDays}
+                                  />
+                                  <Select
+                                    value={useSeasonality}
+                                    options={[{ label: "Seasonality on", value: true }, { label: "Seasonality off", value: false }]}
+                                    onChange={setUseSeasonality}
+                                  />
+                                  <Space.Compact block>
+                                    <InputNumber
+                                      min={-100}
+                                      max={100}
+                                      value={tariffImpactPct}
+                                      onChange={(value) => setTariffImpactPct(Number(value ?? 0))}
+                                      style={{ width: "100%" }}
+                                    />
+                                    <Input value="% tariff demand impact" readOnly style={{ width: 180 }} />
+                                  </Space.Compact>
+                                  <Space.Compact block>
+                                    <InputNumber
+                                      min={0}
+                                      value={minimumMonthlyVolume}
+                                      onChange={(value) => setMinimumMonthlyVolume(Number(value ?? 0))}
+                                      style={{ width: "100%" }}
+                                    />
+                                    <Input value="min avg qty/month" readOnly style={{ width: 165 }} />
+                                  </Space.Compact>
+                                  <Button
+                                    type="primary"
+                                    onClick={() => workspace && loadHierarchicalForecast(workspace.sheetName, forecastFilterState, hierarchyLevel)}
+                                  >
+                                    Run hierarchy forecast
+                                  </Button>
+                                </div>
+                                {hierarchyLevel === "model_accessory" ? (
+                                  <Alert
+                                    style={{ marginTop: 12 }}
+                                    type="info"
+                                    showIcon
+                                    message="Model × accessory uses automatic per-series model selection"
+                                    description={(
+                                      <ol style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                                        <li>Build one monthly series for every brand × model entity × accessory combination.</li>
+                                        <li>Exclude series below the minimum average quantity or with fewer than six active months.</li>
+                                        <li>For each remaining series, compare its eligible baseline and driver models using inner rolling validation.</li>
+                                        <li>Select that series&apos; lowest-WAPE model, then score it on untouched final test months.</li>
+                                        <li>Apply lifecycle rules and the optional tariff scenario only after the model forecast is produced.</li>
+                                      </ol>
+                                    )}
+                                  />
+                                ) : null}
+                                <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
+                                  Tariff is an explicit demand scenario applied after model selection; it is not presented as a learned historical effect.
+                                  Low-volume series below the selected monthly average or with fewer than six active months are excluded.
+                                </Paragraph>
+                              </Card>
+                              <Card className="content-card" title="How this forecast is calculated" size="small">
+                                <div className="health-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+                                  <div><span className="health-label">Working Days</span><strong>OLS-learned coefficient; no fixed weight</strong><Text type="secondary">Feature: (days - mean days) / mean days. It matters only when driver regression is selected.</Text></div>
+                                  <div><span className="health-label">Seasonality</span><strong>OLS sin/cos coefficients + model eligibility</strong><Text type="secondary">Adds annual sin/cos features and allows seasonal naive/mean candidates.</Text></div>
+                                  <div><span className="health-label">Tariff</span><strong>Scenario multiplier, not learned</strong><Text type="secondary">Final = model forecast × max(0, 1 + tariff% / 100).</Text></div>
+                                  <div><span className="health-label">Minimum volume</span><strong>Eligibility filter, not a weight</strong><Text type="secondary">Average monthly quantity must meet the threshold and the series needs at least six active months.</Text></div>
+                                </div>
+                                <pre style={{ whiteSpace: "pre-wrap", margin: "16px 0 0", padding: 14, borderRadius: 10, background: "#f6f8fb", fontSize: 12 }}>{`group monthly quantity at the selected hierarchy grain
+select model on inner rolling validation
+evaluate on untouched final 3-6 months
+if driver regression:
+  y_hat = beta0 + betaTrend*t + betaWD*x_wd + betaSin*sin(month) + betaCos*cos(month)
+final_forecast = max(0, y_hat * max(0, 1 + tariff_pct/100))`}</pre>
+                              </Card>
+                              {hierarchicalForecast ? (
+                                <>
+                                  <Row gutter={[18, 18]}>
+                                    <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Backtest accuracy" value={hierarchicalForecast.summary.accuracyPct ?? "N/A"} suffix={hierarchicalForecast.summary.accuracyPct === null ? "" : "%"} /></Card></Col>
+                                    <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Weighted WAPE" value={hierarchicalForecast.summary.weightedWape === null ? "N/A" : (hierarchicalForecast.summary.weightedWape * 100).toFixed(1)} suffix={hierarchicalForecast.summary.weightedWape === null ? "" : "%"} /></Card></Col>
+                                    <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Forecasted series" value={hierarchicalForecast.summary.seriesCount} /></Card></Col>
+                                    <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Low-volume excluded" value={hierarchicalForecast.summary.excludedLowVolumeSeries} /></Card></Col>
+                                  </Row>
+                                  <Alert
+                                    type={hierarchicalForecast.summary.latestMonthExcluded ? "warning" : "info"}
+                                    showIcon
+                                    message={hierarchicalForecast.summary.accuracyDefinition}
+                                    description={`Latest complete month: ${hierarchicalForecast.summary.latestCompleteMonth ?? "N/A"}. ${hierarchicalForecast.summary.latestMonthExcluded ? `Observed ${hierarchicalForecast.summary.latestObservedMonth} was excluded because its volume was only ${((hierarchicalForecast.summary.latestMonthCompletenessRatio ?? 0) * 100).toFixed(1)}% of the recent 3-month median, below the ${(hierarchicalForecast.summary.latestMonthCompletenessThreshold * 100).toFixed(0)}% completeness threshold. ` : ""}Models: ${Object.entries(hierarchicalForecast.summary.modelCounts).map(([name, count]) => `${name} (${count})`).join(", ") || "none"}.`}
+                                  />
+                                  <Card className="content-card" title="Forecast results">
+                                    <Table
+                                      size="small"
+                                      rowKey="seriesKey"
+                                      pagination={{ pageSize: 20, hideOnSinglePage: true }}
+                                      dataSource={hierarchicalForecast.records}
+                                      columns={[
+                                        { title: "Brand", dataIndex: "brand", key: "brand" },
+                                        { title: "Model", dataIndex: "modelName", key: "modelName", render: (value: string) => value || "All models" },
+                                        { title: "Accessory", dataIndex: "partNumber", key: "partNumber", render: (value: string) => value || "All accessories" },
+                                        { title: "Lifecycle", dataIndex: "lifecycleStatus", key: "lifecycleStatus" },
+                                        { title: "Selected model", dataIndex: "selectedModel", key: "selectedModel" },
+                                        { title: "Independent test model", dataIndex: "backtestModel", key: "backtestModel" },
+                                        { title: "Selection reason", dataIndex: "selectionNote", key: "selectionNote", width: 280 },
+                                        { title: "Learned weights", dataIndex: "learnedCoefficients", key: "learnedCoefficients", width: 300, render: (values: Record<string, number>) => Object.keys(values).length ? Object.entries(values).map(([name, value]) => `${name}=${value.toFixed(3)}`).join(" | ") : "Not used by this model" },
+                                        { title: "History avg", dataIndex: "monthlyAverage", key: "monthlyAverage", align: "right" as const, render: (value: number) => formatMetric(value) },
+                                        { title: "Next forecast", dataIndex: "nextForecast", key: "nextForecast", align: "right" as const, render: (value: number) => formatMetric(value) },
+                                        { title: "WAPE", dataIndex: "wape", key: "wape", align: "right" as const, render: (value: number | null) => value === null ? "N/A" : `${(value * 100).toFixed(1)}%` },
+                                        { title: "Accuracy", dataIndex: "accuracyPct", key: "accuracyPct", align: "right" as const, render: (value: number | null) => value === null ? "N/A" : `${value.toFixed(1)}%` },
+                                        { title: "Forecast months", dataIndex: "forecast", key: "forecast", render: (values: Array<{ month: string; value: number }>) => values.map((item) => `${item.month}: ${formatMetric(item.value)}`).join(" | ") },
+                                      ]}
+                                      scroll={{ x: 1500 }}
+                                    />
+                                  </Card>
+                                </>
+                              ) : (
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Run a hierarchical forecast to calculate rolling-backtest accuracy." />
+                              )}
+                            </div>
+                          </Spin>
+                        ) : null}
 
                         {forecastView === "leaderboard" ? (
                           <Card
@@ -3089,39 +3457,31 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               <div className="inventory-control-grid">
                                 <label>
                                   <span>Current inventory</span>
-                                  <InputNumber
-                                    min={0}
-                                    value={inventoryCurrentStock}
-                                    onChange={(value) => setInventoryCurrentStock(Number(value ?? 0))}
-                                    addonAfter="pcs"
-                                  />
+                                  <Space.Compact block>
+                                    <InputNumber min={0} value={inventoryCurrentStock} onChange={(value) => setInventoryCurrentStock(Number(value ?? 0))} style={{ width: "100%" }} />
+                                    <Input value="pcs" readOnly style={{ width: 64 }} />
+                                  </Space.Compact>
                                 </label>
                                 <label>
                                   <span>Open purchase / in transit</span>
-                                  <InputNumber
-                                    min={0}
-                                    value={inventoryOnOrder}
-                                    onChange={(value) => setInventoryOnOrder(Number(value ?? 0))}
-                                    addonAfter="pcs"
-                                  />
+                                  <Space.Compact block>
+                                    <InputNumber min={0} value={inventoryOnOrder} onChange={(value) => setInventoryOnOrder(Number(value ?? 0))} style={{ width: "100%" }} />
+                                    <Input value="pcs" readOnly style={{ width: 64 }} />
+                                  </Space.Compact>
                                 </label>
                                 <label>
                                   <span>Lead time</span>
-                                  <InputNumber
-                                    min={0}
-                                    value={inventoryLeadTimeDays}
-                                    onChange={(value) => setInventoryLeadTimeDays(Number(value ?? 0))}
-                                    addonAfter="days"
-                                  />
+                                  <Space.Compact block>
+                                    <InputNumber min={0} value={inventoryLeadTimeDays} onChange={(value) => setInventoryLeadTimeDays(Number(value ?? 0))} style={{ width: "100%" }} />
+                                    <Input value="days" readOnly style={{ width: 64 }} />
+                                  </Space.Compact>
                                 </label>
                                 <label>
                                   <span>Review period</span>
-                                  <InputNumber
-                                    min={1}
-                                    value={inventoryReviewDays}
-                                    onChange={(value) => setInventoryReviewDays(Number(value ?? 1))}
-                                    addonAfter="days"
-                                  />
+                                  <Space.Compact block>
+                                    <InputNumber min={1} value={inventoryReviewDays} onChange={(value) => setInventoryReviewDays(Number(value ?? 1))} style={{ width: "100%" }} />
+                                    <Input value="days" readOnly style={{ width: 64 }} />
+                                  </Space.Compact>
                                 </label>
                                 <label>
                                   <span>Service level</span>
@@ -3138,22 +3498,17 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                 </label>
                                 <label>
                                   <span>Order pack size</span>
-                                  <InputNumber
-                                    min={1}
-                                    value={inventoryPackSize}
-                                    onChange={(value) => setInventoryPackSize(Number(value ?? 1))}
-                                    addonAfter="pcs"
-                                  />
+                                  <Space.Compact block>
+                                    <InputNumber min={1} value={inventoryPackSize} onChange={(value) => setInventoryPackSize(Number(value ?? 1))} style={{ width: "100%" }} />
+                                    <Input value="pcs" readOnly style={{ width: 64 }} />
+                                  </Space.Compact>
                                 </label>
                                 <label>
                                   <span>Manual buffer</span>
-                                  <InputNumber
-                                    min={0}
-                                    max={200}
-                                    value={inventoryManualBufferPct}
-                                    onChange={(value) => setInventoryManualBufferPct(Number(value ?? 0))}
-                                    addonAfter="%"
-                                  />
+                                  <Space.Compact block>
+                                    <InputNumber min={0} max={200} value={inventoryManualBufferPct} onChange={(value) => setInventoryManualBufferPct(Number(value ?? 0))} style={{ width: "100%" }} />
+                                    <Input value="%" readOnly style={{ width: 64 }} />
+                                  </Space.Compact>
                                 </label>
                               </div>
                             </Card>

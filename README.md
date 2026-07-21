@@ -416,6 +416,27 @@ V1 is the data-preparation and field-classification foundation. Planned modules:
 - `Wholesale monthly trend` = group matched wholesale rows by month, then sum wholesale units.
 - `PNVW monthly trend` = monthly `SumOfPIS_CRP_CFM_PRI` divided by monthly wholesale units.
 
+### Model Entities and Lifecycle / 车型实体与生命周期
+
+- Model entities use normalized `brand + model name` keys. Model codes remain descriptive attributes, so distinct names that share a code are not merged.
+- The lifecycle table is calculated from positive monthly PIO activity. It identifies models discontinued through 2024, later inactivity, and reintroduction after a gap of at least 12 months, with evidence months shown in EDA.
+- Excel date values, including mixed Excel serials and text dates, are normalized before analysis. Numeric `-1` sentinels are converted to `0` at ingestion.
+
+### 2023–2026 Monthly Fact Table / 2023–2026 月度事实表
+
+- Grain: `month × brand × model entity × accessory`.
+- Measures include installation quantity, PIO revenue, wholesale units, PNVW, working days, and quantity per working day.
+- `GET /api/workbooks/{id}/sheets/{sheet}/monthly-facts` returns the filterable fact-table summary and rows.
+
+### Hierarchical Forecasting / 分层预测
+
+- Forecast levels are brand, model, and model × accessory. Brand and model levels can use automatic selection or a forced eligible statistical model; model × accessory always selects the best eligible model independently for each series.
+- Statistical candidates include naive last, mean, moving-average, trend, seasonal-naive/mean, and Croston SBA baselines. Optional OLS driver regression learns trend, working-day, and annual sine/cosine coefficients from history.
+- Low-volume series are excluded when the historical monthly average is below the selected threshold or fewer than six active months exist. Discontinued model/model × accessory series are forecast as zero.
+- Accuracy is `max(0, 1 - WAPE)` on an independent expanding-window holdout of the latest 3–6 complete months. Those outer-test months are not used for model selection.
+- Tariff impact is an explicit post-model quantity scenario, `forecast × max(0, 1 + tariffImpactPct / 100)`; it is not presented as a learned historical tariff effect.
+- `GET /api/workbooks/{id}/sheets/{sheet}/hierarchical-forecast` returns forecasts, selected models, learned coefficients, and backtest diagnostics.
+
 ---
 
 ## License

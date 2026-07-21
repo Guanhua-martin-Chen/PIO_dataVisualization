@@ -82,6 +82,41 @@ export type EdaDashboardPayload = {
     ambiguousWholesaleModelCodes: Array<{ value: string; models: string[] }>;
     unmatchedSalesModelCodes: Array<{ value: string; rows: number[] }>;
   };
+  modelEntities: {
+    count: number;
+    records: Array<{
+      entityKey: string;
+      modelName: string;
+      brand: string;
+      modelCodes: string[];
+      modelYears: string[];
+      rowCount: number;
+    }>;
+  };
+  modelLifecycle: {
+    cutoffYear: number;
+    asOfMonth: string | null;
+    entityCount: number;
+    discontinuedCount: number;
+    reintroducedCount: number;
+    inactiveCount: number;
+    records: Array<{
+      entityKey: string;
+      modelName: string;
+      brand: string;
+      modelCodes: string[];
+      firstPositiveMonth: string;
+      lastPositiveMonth: string;
+      status: string;
+      statusCode: "active" | "inactive" | "discontinued" | "reintroduced";
+      discontinuedThroughCutoff: boolean;
+      reintroduced: boolean;
+      reintroducedMonth: string | null;
+      longestInactiveGapMonths: number;
+      inactiveMonthsAtDataEnd: number;
+      evidence: string;
+    }>;
+  };
 };
 
 export type WorkspacePayload = {
@@ -160,6 +195,108 @@ export type WorkspacePayload = {
     part: Array<{ label: string; value: string; count: number }>;
   };
   edaDashboard?: EdaDashboardPayload;
+};
+
+export type MonthlyFactsPayload = {
+  summary: {
+    rowCount: number;
+    monthCount: number;
+    minMonth: string | null;
+    maxMonth: string | null;
+    brandCount: number;
+    modelCount: number;
+    partCount: number;
+    totalQuantity: number;
+    totalRevenue: number;
+    wholesaleCoveragePct: number;
+    workingDaysCoveragePct: number;
+    grain: string;
+  };
+  columns: string[];
+  rows: Array<{
+    month: string;
+    brand: string;
+    entityKey: string;
+    modelName: string;
+    modelCode: string;
+    partNumber: string;
+    partDescription: string;
+    lifecycleStatus: string;
+    installationQuantity: number;
+    pioRevenue: number;
+    wholesaleUnits: number | null;
+    pnvw: number | null;
+    workingDays: number | null;
+    quantityPerWorkingDay: number | null;
+    sourceRows: number;
+  }>;
+  page: number;
+  pageSize: number;
+  totalRows: number;
+};
+
+export type HierarchicalForecastPayload = {
+  summary: {
+    level: "brand" | "model" | "model_accessory";
+    seriesCount: number;
+    excludedLowVolumeSeries: number;
+    latestCompleteMonth: string | null;
+    latestObservedMonth: string | null;
+    latestMonthCompletenessRatio: number | null;
+    latestMonthCompletenessThreshold: number;
+    latestMonthExcluded: boolean;
+    horizon: number;
+    weightedWape: number | null;
+    accuracyPct: number | null;
+    modelCounts: Record<string, number>;
+    factors: {
+      workingDays: boolean;
+      seasonality: boolean;
+      tariffImpactPct: number;
+      minMonthlyVolume: number;
+      modelStrategy: string;
+    };
+    calculation: {
+      target: string;
+      aggregationGrain: string;
+      workingDaysFeature: string;
+      seasonalityFeature: string;
+      driverEquation: string;
+      tariffFormula: string;
+      volumeFilter: string;
+      selectionProcess: string;
+    };
+    accuracyDefinition: string;
+  };
+  records: Array<{
+    seriesKey: string;
+    level: string;
+    brand: string;
+    modelName: string;
+    entityKey: string;
+    partNumber: string;
+    partDescription: string;
+    lifecycleStatus: string;
+    historyMonths: number;
+    activeMonths: number;
+    historyVolume: number;
+    monthlyAverage: number;
+    latestActual: number;
+    selectedModel: string;
+    requestedModelStrategy: string;
+    selectionNote: string;
+    learnedCoefficients: Record<string, number>;
+    backtestModel: string;
+    backtestPoints: number;
+    backtestActual: number;
+    backtestAbsoluteError: number;
+    wape: number | null;
+    accuracyPct: number | null;
+    mae: number | null;
+    bias: number | null;
+    forecast: Array<{ month: string; value: number }>;
+    nextForecast: number;
+  }>;
 };
 
 export type TableState = {
