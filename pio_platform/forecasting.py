@@ -87,13 +87,15 @@ MODEL_SPECS = [
 ]
 
 
-def candidate_models(history: list[float]) -> list[str]:
+def candidate_models(history: list[float], use_seasonality: bool = True) -> list[str]:
     values = [max(float(value), 0.0) for value in history]
     zero_share = _history_zero_share(values)
     models: list[str] = []
 
     for spec in MODEL_SPECS:
         if len(values) < spec.min_history:
+            continue
+        if spec.family == "seasonal" and not use_seasonality:
             continue
         if spec.family == "seasonal" and zero_share >= 0.45:
             continue
@@ -209,8 +211,11 @@ def backtest_history(
     )
 
 
-def select_best_model(history: list[float]) -> tuple[str, list[dict[str, Any]], ForecastDiagnostics]:
-    models = candidate_models(history)
+def select_best_model(
+    history: list[float],
+    use_seasonality: bool = True,
+) -> tuple[str, list[dict[str, Any]], ForecastDiagnostics]:
+    models = candidate_models(history, use_seasonality=use_seasonality)
     scores: list[dict[str, Any]] = []
     _, adjusted_points = clean_training_history(history)
     preprocessing_modes = ["raw"]
@@ -1074,12 +1079,13 @@ def build_wholesale_signal_model(
     if grouped.empty:
         return None
 
-    grouped[model_col] = grouped[model_col].fillna("").astype(str).str.strip()
+    grouped["__model_key"] = _normalize_model_key(grouped[model_col])
+    wholesale_working = wholesale_long.copy()
+    wholesale_working["__model_key"] = _normalize_model_key(wholesale_working["model"])
     merged = grouped.merge(
-        wholesale_long,
+        wholesale_working,
         how="left",
-        left_on=["month", model_col],
-        right_on=["month", "model"],
+        on=["month", "__model_key"],
     )
     merged["wholesale"] = pd.to_numeric(merged["wholesale"], errors="coerce")
     merged = merged[merged["wholesale"].notna()].copy()
@@ -1159,6 +1165,16 @@ def build_wholesale_signal_model(
         "wholesaleContribution": float(latest["wholesale_effect"]) if pd.notna(latest["wholesale_effect"]) else None,
         "relationshipStrength": _relationship_strength(float(model_wape) if model_wape is not None else None),
     }
+
+
+def _normalize_model_key(series: pd.Series) -> pd.Series:
+    return (
+        series.fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(r"\s+", " ", regex=True)
+    )
 
 
 def _design_matrix(frame: pd.DataFrame) -> np.ndarray:

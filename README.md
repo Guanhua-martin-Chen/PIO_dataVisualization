@@ -397,7 +397,7 @@ V1 is the data-preparation and field-classification foundation. Planned modules:
 - **Data quality diagnostics / 数据质量诊断**: checks missing key fields, negative revenue, negative installation quantity, zero installation quantity, and unit-price p01 / p99 outliers.
 - **Part number vs description discrepancies / 零件号与描述差异检查**: checks whether one `PIS_PNO` maps to multiple `Part Description` values. Case-only or spacing-only differences are shown as format warnings, not true description mismatches.
 - **Top brand revenue / 品牌收入排行**: groups by `PIS_CMP_KND` and sums `SumOfPIS_CRP_CFM_PRI`.
-- **Wholesale relationship check / Wholesale 关联检查**: links `PIO_Sales_Data.PIS_SERI` to `Vehicle_Wholesale_Data.Model Code`, then lists unmatched `PIS_SERI` samples with source Excel row numbers.
+- **Wholesale relationship check / Wholesale 关联检查**: matches normalized `Model` names first, reports model-name coverage and shared model codes, and uses `PIS_SERI` / `Model Code` only as a fallback when the wholesale code identifies one model uniquely.
 - **PNVW definition / PNVW 计算口径**: `PNVW = SumOfPIS_CRP_CFM_PRI / wholesale units`. The numerator uses dollar revenue from `SumOfPIS_CRP_CFM_PRI`, not installation quantity from `SumOfPIS_INST_QT`.
 
 ### Visual Charts Additions / 可视化图表补充
@@ -415,6 +415,27 @@ V1 is the data-preparation and field-classification foundation. Planned modules:
 - `Top vehicle models by revenue` = group by `Model`, then sum `SumOfPIS_CRP_CFM_PRI`.
 - `Wholesale monthly trend` = group matched wholesale rows by month, then sum wholesale units.
 - `PNVW monthly trend` = monthly `SumOfPIS_CRP_CFM_PRI` divided by monthly wholesale units.
+
+### Model Entities and Lifecycle / 车型实体与生命周期
+
+- Model entities use normalized `brand + model name` keys. Model codes remain descriptive attributes, so distinct names that share a code are not merged.
+- The lifecycle table is calculated from positive monthly PIO activity. It identifies models discontinued through 2024, later inactivity, and reintroduction after a gap of at least 12 months, with evidence months shown in EDA.
+- Excel date values, including mixed Excel serials and text dates, are normalized before analysis. Numeric `-1` sentinels are converted to `0` at ingestion.
+
+### 2023–2026 Monthly Fact Table / 2023–2026 月度事实表
+
+- Grain: `month × brand × model entity × accessory`.
+- Measures include installation quantity, PIO revenue, wholesale units, PNVW, working days, and quantity per working day.
+- `GET /api/workbooks/{id}/sheets/{sheet}/monthly-facts` returns the filterable fact-table summary and rows.
+
+### Hierarchical Forecasting / 分层预测
+
+- Forecast levels are brand, model, and model × accessory. Brand and model levels can use automatic selection or a forced eligible statistical model; model × accessory always selects the best eligible model independently for each series.
+- Statistical candidates include naive last, mean, moving-average, trend, seasonal-naive/mean, and Croston SBA baselines. Optional OLS driver regression learns trend, working-day, and annual sine/cosine coefficients from history.
+- Low-volume series are excluded when the historical monthly average is below the selected threshold or fewer than six active months exist. Discontinued model/model × accessory series are forecast as zero.
+- Accuracy is `max(0, 1 - WAPE)` on an independent expanding-window holdout of the latest 3–6 complete months. Those outer-test months are not used for model selection.
+- Tariff impact is an explicit post-model quantity scenario, `forecast × max(0, 1 + tariffImpactPct / 100)`; it is not presented as a learned historical tariff effect.
+- `GET /api/workbooks/{id}/sheets/{sheet}/hierarchical-forecast` returns forecasts, selected models, learned coefficients, and backtest diagnostics.
 
 ---
 

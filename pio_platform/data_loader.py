@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from io import BytesIO
 import re
 from typing import Any
@@ -81,6 +82,31 @@ def load_dataset(
 
 
 def detect_header_config(raw_df: pd.DataFrame, max_scan_rows: int = 8) -> tuple[int, int]:
+    first_row_tokens = {_to_token_string(str(value)) for value in raw_df.iloc[0].dropna().tolist()}
+    business_header_signals = {
+        "pis mst ivc dt", "pis cmp knd", "pis seri", "pis mdl yy", "pis pno",
+        "sumofpis inst qt", "sumofpis crp cfm pri", "model", "part description",
+    }
+    if len(first_row_tokens & business_header_signals) >= 3:
+        return (0, 1)
+
+    # Wide wholesale sheets normally have a year/title row immediately above
+    # a row containing the twelve month labels. Prefer that deterministic
+    # two-row header over the generic score, which can otherwise absorb the
+    # first vehicle row into the header when many leading brand cells are blank.
+    month_tokens = {
+        "jan", "january", "feb", "february", "mar", "march", "apr", "april",
+        "may", "jun", "june", "jul", "july", "aug", "august", "sep", "september",
+        "oct", "october", "nov", "november", "dec", "december",
+    }
+    for row_index in range(min(len(raw_df), max_scan_rows)):
+        values = {
+            str(value).strip().lower()
+            for value in raw_df.iloc[row_index].dropna().tolist()
+        }
+        if len(values & month_tokens) >= 6:
+            return (max(0, row_index - 1), 2)
+
     best_score = float("-inf")
     best_config = (0, 1)
     limit = min(len(raw_df), max_scan_rows)
@@ -118,7 +144,7 @@ def materialize_dataset(raw_df: pd.DataFrame, header_row_index: int, header_dept
     dataset.columns = deduplicate_columns(dataset.columns.tolist())
     dataset = dataset.reset_index(drop=True)
 
-    object_columns = dataset.select_dtypes(include="object").columns
+    object_columns = dataset.select_dtypes(include=["object", "str"]).columns
     if len(object_columns) > 0:
         dataset[object_columns] = dataset[object_columns].apply(lambda s: s.map(_clean_cell_value))
         for column in object_columns:
@@ -131,6 +157,13 @@ def materialize_dataset(raw_df: pd.DataFrame, header_row_index: int, header_dept
                 numeric_candidate.notna().mean() >= 0.5 and _has_numeric_hint(column)
             ):
                 dataset[column] = numeric_candidate
+
+    # The source workbooks use -1 as a missing/zero sentinel in otherwise
+    # non-negative business measures (notably wholesale month cells). Normalize
+    # it once at intake so every downstream EDA and forecast uses one definition.
+    numeric_columns = dataset.select_dtypes(include="number").columns
+    if len(numeric_columns) > 0:
+        dataset[numeric_columns] = dataset[numeric_columns].replace(-1, 0)
 
     return dataset
 
@@ -224,44 +257,66 @@ def parse_date_series(series: pd.Series) -> pd.Series:
     if pd.api.types.is_datetime64_any_dtype(series):
         return pd.to_datetime(series, errors="coerce")
 
-    non_null = series.dropna()
-    if non_null.empty:
-        return pd.to_datetime(series, errors="coerce")
+    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    non_null_mask = series.notna()
+    if not non_null_mask.any():
+        return result
 
-    numeric_like = pd.to_numeric(non_null, errors="coerce")
-    numeric_ratio = numeric_like.notna().mean()
+    # Mixed Excel columns can contain true datetimes, ISO strings, and Excel
+    # day serials in the same field. Parse each representation independently;
+    # passing a serial such as 46195 directly to pd.to_datetime interprets it
+    # as nanoseconds after 1970 and corrupts the history range.
+    datetime_mask = series.map(lambda value: isinstance(value, (pd.Timestamp, datetime, date))) & non_null_mask
+    if datetime_mask.any():
+        result.loc[datetime_mask] = pd.to_datetime(series.loc[datetime_mask], errors="coerce")
 
-    if numeric_ratio >= 0.9:
-        sample = numeric_like.dropna().astype("int64").astype(str).head(10)
-        lengths = {len(value) for value in sample}
-        if lengths == {6}:
-            numeric_series = pd.to_numeric(series, errors="coerce")
-            return pd.to_datetime(
-                numeric_series.map(lambda value: f"{int(value):06d}" if pd.notna(value) else None),
-                format="%Y%m",
-                errors="coerce",
-            )
-        if lengths == {8}:
-            numeric_series = pd.to_numeric(series, errors="coerce")
-            return pd.to_datetime(
-                numeric_series.map(lambda value: f"{int(value):08d}" if pd.notna(value) else None),
-                format="%Y%m%d",
-                errors="coerce",
-            )
-        if lengths == {4}:
-            numeric_series = pd.to_numeric(series, errors="coerce")
-            plausible_years = numeric_series.dropna().between(1900, 2100).mean() >= 0.9
-            if plausible_years:
-                return pd.to_datetime(
-                    numeric_series.map(lambda value: f"{int(value):04d}-01-01" if pd.notna(value) else None),
-                    format="%Y-%m-%d",
-                    errors="coerce",
-                )
-        return pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    numeric = pd.to_numeric(series, errors="coerce")
+    numeric_mask = numeric.notna() & ~datetime_mask
+    integral_mask = numeric_mask & ((numeric % 1).abs() < 1e-9)
 
-    if non_null.astype(str).str.contains(r"[-/]|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec", case=False, regex=True).mean() < 0.6:
-        return pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
-    return pd.to_datetime(series, errors="coerce")
+    yyyymmdd_mask = integral_mask & numeric.between(19000101, 21001231)
+    if yyyymmdd_mask.any():
+        values = numeric.loc[yyyymmdd_mask].astype("int64").astype(str)
+        result.loc[yyyymmdd_mask] = pd.to_datetime(values, format="%Y%m%d", errors="coerce")
+
+    yyyymm_mask = integral_mask & numeric.between(190001, 210012) & result.isna()
+    if yyyymm_mask.any():
+        values = numeric.loc[yyyymm_mask].astype("int64").astype(str)
+        result.loc[yyyymm_mask] = pd.to_datetime(values, format="%Y%m", errors="coerce")
+
+    year_mask = integral_mask & numeric.between(1900, 2100) & result.isna()
+    if year_mask.any():
+        values = numeric.loc[year_mask].astype("int64").astype(str)
+        result.loc[year_mask] = pd.to_datetime(values, format="%Y", errors="coerce")
+
+    excel_serial_mask = integral_mask & numeric.between(20000, 80000) & result.isna()
+    if excel_serial_mask.any():
+        result.loc[excel_serial_mask] = pd.to_datetime(
+            numeric.loc[excel_serial_mask], unit="D", origin="1899-12-30", errors="coerce"
+        )
+
+    remaining_mask = non_null_mask & result.isna() & ~numeric_mask
+    if remaining_mask.any():
+        text = series.loc[remaining_mask].astype(str).str.strip()
+        looks_date_like = text.str.contains(
+            r"[-/]|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|^\d{4}(?:\d{2})?(?:\d{2})?$",
+            case=False,
+            regex=True,
+        )
+        if looks_date_like.any():
+            candidates = text.loc[looks_date_like]
+            try:
+                parsed = pd.to_datetime(candidates, format="mixed", errors="coerce")
+            except (TypeError, ValueError):
+                parsed = pd.to_datetime(candidates, errors="coerce")
+            parsed_series = pd.Series(parsed, index=candidates.index)
+            parsed_years = parsed_series.map(lambda value: value.year if pd.notna(value) else None)
+            valid_index = parsed_years[parsed_years.between(1900, 2100, inclusive="both")].index
+            if len(valid_index) > 0:
+                safe_values = pd.to_datetime(parsed_series.loc[valid_index].astype(str), errors="coerce")
+                result.loc[valid_index] = safe_values
+
+    return result
 
 
 def _score_candidate(df: pd.DataFrame, row_index: int, depth: int) -> float:

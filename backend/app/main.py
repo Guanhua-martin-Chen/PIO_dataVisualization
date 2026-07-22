@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import pickle
 import threading
@@ -37,6 +38,14 @@ from pio_platform.forecasting import (
     preprocess_history,
     select_best_model,
 )
+from pio_platform.fact_table import (
+    build_monthly_fact_table,
+    build_wholesale_long,
+    build_working_days_long,
+    summarize_monthly_facts,
+)
+from pio_platform.model_entities import build_model_entity_map, build_model_lifecycle
+from pio_platform.hierarchical_forecasting import build_hierarchical_forecast
 from pio_platform.pivot import build_pivot, is_wide_month_matrix, wide_brand_series
 from pio_platform.profiling import build_column_profile, build_insights, compute_kpis
 
@@ -87,6 +96,7 @@ class WorkbookSession:
     file_bytes: bytes
     sheet_names: list[str]
     bundles: dict[str, DatasetBundle] = field(default_factory=dict)
+    monthly_facts: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 WORKBOOKS: dict[str, WorkbookSession] = {}
@@ -151,7 +161,29 @@ def _bundle_cache_path(workbook_id: str, sheet_name: str) -> Path:
     return OUTPUTS_DIR / f"{workbook_id}_{safe_name}_bundle.pkl"
 
 
-def _add_to_index(workbook_id: str, filename: str, sheet_names: list[str]) -> None:
+def _workbook_sha256(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def _stored_entry_hash(entry: dict[str, Any]) -> str | None:
+    stored_hash = str(entry.get("fileHash", "")).strip().lower()
+    if stored_hash:
+        return stored_hash
+    workbook_id = str(entry.get("id", "")).strip()
+    path = OUTPUTS_DIR / f"{workbook_id}.xlsx"
+    if not workbook_id or not path.exists():
+        return None
+    return _workbook_sha256(path.read_bytes())
+
+
+def _find_workbook_by_hash(file_hash: str) -> dict[str, Any] | None:
+    for entry in _load_index():
+        if _stored_entry_hash(entry) == file_hash.lower():
+            return entry
+    return None
+
+
+def _add_to_index(workbook_id: str, filename: str, sheet_names: list[str], file_hash: str) -> None:
     entries = _load_index()
     # Remove duplicate
     entries = [e for e in entries if e["id"] != workbook_id]
@@ -161,6 +193,7 @@ def _add_to_index(workbook_id: str, filename: str, sheet_names: list[str]) -> No
         "sheetNames": sheet_names,
         "defaultSheet": sheet_names[0] if sheet_names else None,
         "uploadedAt": datetime.now(timezone.utc).isoformat(),
+        "fileHash": file_hash,
     })
     # Evict oldest beyond MAX_WORKBOOKS
     old = entries[MAX_WORKBOOKS:]
@@ -225,6 +258,17 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Only .xlsx and .xls files are supported.")
 
     file_bytes = await file.read()
+    file_hash = _workbook_sha256(file_bytes)
+    duplicate = _find_workbook_by_hash(file_hash)
+    if duplicate is not None:
+        return {
+            "workbookId": duplicate["id"],
+            "filename": duplicate["filename"],
+            "sheetNames": duplicate["sheetNames"],
+            "defaultSheet": duplicate.get("defaultSheet") or duplicate["sheetNames"][0],
+            "duplicate": True,
+        }
+
     sheet_names = list_workbook_sheets(file_bytes)
     if not sheet_names:
         raise HTTPException(status_code=400, detail="The uploaded workbook does not contain any sheets.")
@@ -233,7 +277,7 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
 
     # ── Phase 1: persist to disk and return immediately ───────────────────────
     (OUTPUTS_DIR / f"{workbook_id}.xlsx").write_bytes(file_bytes)
-    _add_to_index(workbook_id, file.filename, sheet_names)
+    _add_to_index(workbook_id, file.filename, sheet_names, file_hash)
 
     session = WorkbookSession(
         workbook_id=workbook_id,
@@ -257,6 +301,7 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
         "filename": file.filename,
         "sheetNames": sheet_names,
         "defaultSheet": sheet_names[0],
+        "duplicate": False,
     }
 
 
@@ -408,6 +453,92 @@ def get_part_forecast(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/monthly-facts")
+def get_monthly_facts(
+    workbook_id: str,
+    sheet_name: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=10, le=200),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    part: list[str] = Query(default=[]),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+) -> dict[str, Any]:
+    session = _get_session(workbook_id)
+    facts = _get_monthly_fact_table(session, sheet_name).copy()
+    if brand:
+        facts = facts[facts["brand"].isin(brand)]
+    if model:
+        facts = facts[facts["modelName"].isin(model)]
+    if part:
+        facts = facts[facts["partNumber"].isin(part)]
+    if start_date:
+        facts = facts[facts["month"] >= str(start_date)[:7]]
+    if end_date:
+        facts = facts[facts["month"] <= str(end_date)[:7]]
+
+    total_rows = int(len(facts))
+    start = (page - 1) * page_size
+    page_df = facts.iloc[start : start + page_size]
+    return {
+        "summary": summarize_monthly_facts(facts),
+        "columns": list(facts.columns),
+        "rows": _dataframe_records(page_df),
+        "page": page,
+        "pageSize": page_size,
+        "totalRows": total_rows,
+    }
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/hierarchical-forecast")
+def get_hierarchical_forecast(
+    workbook_id: str,
+    sheet_name: str,
+    level: str = Query(default="brand"),
+    horizon: int = Query(default=6, ge=1, le=12),
+    use_working_days: bool = Query(default=True),
+    use_seasonality: bool = Query(default=True),
+    tariff_impact_pct: float = Query(default=0.0, ge=-100.0, le=100.0),
+    min_monthly_volume: float = Query(default=5.0, ge=0.0),
+    model_strategy: str = Query(default="auto"),
+    limit: int = Query(default=100, ge=1, le=200),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    part: list[str] = Query(default=[]),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+) -> dict[str, Any]:
+    session = _get_session(workbook_id)
+    facts = _get_monthly_fact_table(session, sheet_name).copy()
+    if brand:
+        facts = facts[facts["brand"].isin(brand)]
+    if model:
+        facts = facts[facts["modelName"].isin(model)]
+    if part:
+        facts = facts[facts["partNumber"].isin(part)]
+    if start_date:
+        facts = facts[facts["month"] >= str(start_date)[:7]]
+    if end_date:
+        facts = facts[facts["month"] <= str(end_date)[:7]]
+    try:
+        return build_hierarchical_forecast(
+            facts,
+            _working_days_long(session, sheet_name),
+            level=level,
+            horizon=horizon,
+            use_working_days=use_working_days,
+            use_seasonality=use_seasonality,
+            tariff_impact_pct=tariff_impact_pct,
+            min_monthly_volume=min_monthly_volume,
+            model_strategy=model_strategy,
+            limit=limit,
+            latest_month_is_complete=_latest_sales_month_is_complete(session, sheet_name),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast/export.csv")
@@ -908,6 +1039,22 @@ def _build_eda_dashboard(
 
     monthly = _build_eda_monthly(df, columns, date_series, revenue, quantity, wholesale_long)
     relationship = _build_eda_relationship(df, columns, monthly, wholesale_long, bundle.profile)
+    model_entities = build_model_entity_map(
+        df,
+        model_col=columns["model"],
+        brand_col=columns["brand"],
+        model_code_col=columns["model_code"],
+        model_year_col=bundle.roles.get("model_year"),
+    )
+    model_lifecycle = build_model_lifecycle(
+        df,
+        date_series,
+        model_col=columns["model"],
+        qty_col=columns["quantity"],
+        brand_col=columns["brand"],
+        model_code_col=columns["model_code"],
+        cutoff_year=2024,
+    )
 
     return {
         "overview": overview,
@@ -919,6 +1066,8 @@ def _build_eda_dashboard(
             "topBrands": _eda_top_groups(df, columns["brand"], revenue, quantity),
         },
         "relationship": relationship,
+        "modelEntities": model_entities,
+        "modelLifecycle": model_lifecycle,
     }
 
 
@@ -1197,12 +1346,42 @@ def _build_eda_relationship(
     matched = sales_codes & wholesale_codes
     coverage = round(len(matched) / len(sales_codes) * 100, 2) if sales_codes else None
 
+    model_col = columns.get("model")
+    sales_model_names: set[str] = set()
+    wholesale_model_names: set[str] = set()
+    ambiguous_sales_codes: list[dict[str, Any]] = []
+    ambiguous_wholesale_codes: list[dict[str, Any]] = []
+    if model_col and model_col in df.columns:
+        sales_model_names = set(_eda_normalize_model_name_series(df[model_col]))
+        if model_code_col and model_code_col in df.columns:
+            ambiguous_sales_codes = _eda_ambiguous_model_codes(
+                pd.DataFrame({"code": df[model_code_col], "model": df[model_col]})
+            )
+    if not wholesale_long.empty and "model" in wholesale_long.columns:
+        wholesale_model_names = set(_eda_normalize_model_name_series(wholesale_long["model"]))
+        if "modelCode" in wholesale_long.columns:
+            ambiguous_wholesale_codes = _eda_ambiguous_model_codes(
+                pd.DataFrame({"code": wholesale_long["modelCode"], "model": wholesale_long["model"]})
+            )
+    matched_model_names = sales_model_names & wholesale_model_names
+    model_name_coverage = (
+        round(len(matched_model_names) / len(sales_model_names) * 100, 2)
+        if sales_model_names
+        else None
+    )
+
     return {
         "revenueWholesaleCorrelation": corr,
         "matchedModelCodes": len(matched),
         "salesModelCodes": len(sales_codes),
         "wholesaleModelCodes": len(wholesale_codes),
         "modelCodeCoveragePct": coverage,
+        "matchedModelNames": len(matched_model_names),
+        "salesModelNames": len(sales_model_names),
+        "wholesaleModelNames": len(wholesale_model_names),
+        "modelNameCoveragePct": model_name_coverage,
+        "ambiguousSalesModelCodes": ambiguous_sales_codes,
+        "ambiguousWholesaleModelCodes": ambiguous_wholesale_codes,
         "unmatchedSalesModelCodes": [
             {"value": value, "rows": code_rows.get(value, [])}
             for value in sorted(sales_codes - wholesale_codes)[:10]
@@ -1213,6 +1392,83 @@ def _build_eda_relationship(
 def _eda_normalize_code_series(series: pd.Series) -> list[str]:
     values = series.dropna().astype(str).str.strip().str.upper()
     return [value for value in values.unique().tolist() if value]
+
+
+def _eda_normalize_model_name_series(series: pd.Series) -> list[str]:
+    values = (
+        series.dropna()
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace(r"\s+", " ", regex=True)
+    )
+    return [value for value in values.unique().tolist() if value]
+
+
+def _eda_ambiguous_model_codes(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    working = frame.copy()
+    working["code"] = working["code"].fillna("").astype(str).str.strip().str.upper()
+    working["model"] = (
+        working["model"].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+    )
+    working = working[(working["code"] != "") & (working["model"] != "")].drop_duplicates()
+    if working.empty:
+        return []
+    grouped = working.groupby("code")["model"].agg(lambda values: sorted(set(values)))
+    return [
+        {"value": str(code), "models": models}
+        for code, models in grouped.items()
+        if len(models) > 1
+    ]
+
+
+def _filter_wholesale_for_sales_slice(
+    sales_df: pd.DataFrame,
+    wholesale_long: pd.DataFrame,
+    model_col: str | None,
+    model_code_col: str | None,
+) -> pd.DataFrame:
+    """Match a filtered sales slice without treating a shared model code as a unique vehicle key."""
+    if wholesale_long.empty or not model_col or model_col not in sales_df.columns or "model" not in wholesale_long.columns:
+        return wholesale_long
+
+    sales = pd.DataFrame({"model": sales_df[model_col]})
+    if model_code_col and model_code_col in sales_df.columns:
+        sales["code"] = sales_df[model_code_col]
+    else:
+        sales["code"] = ""
+    sales["modelKey"] = (
+        sales["model"].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+    )
+    sales["codeKey"] = sales["code"].fillna("").astype(str).str.strip().str.upper()
+    sales = sales[(sales["modelKey"] != "")].drop_duplicates()
+    if sales.empty:
+        return wholesale_long.iloc[0:0].copy()
+
+    wholesale = wholesale_long.copy()
+    wholesale["__modelKey"] = (
+        wholesale["model"].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+    )
+    wholesale["__codeKey"] = (
+        wholesale.get("modelCode", pd.Series("", index=wholesale.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    sales_names = set(sales["modelKey"])
+    matched = wholesale["__modelKey"].isin(sales_names)
+
+    unmatched_sales = sales[~sales["modelKey"].isin(set(wholesale["__modelKey"]))]
+    if not unmatched_sales.empty:
+        code_cardinality = wholesale.groupby("__codeKey")["__modelKey"].nunique()
+        unique_codes = set(code_cardinality[code_cardinality == 1].index) - {""}
+        safe_fallback_codes = set(unmatched_sales["codeKey"]) & unique_codes
+        if safe_fallback_codes:
+            matched |= wholesale["__codeKey"].isin(safe_fallback_codes)
+
+    return wholesale.loc[matched].drop(columns=["__modelKey", "__codeKey"])
 
 
 def _eda_normalized_code_frame(df: pd.DataFrame, column: str, profile: dict[str, Any]) -> pd.DataFrame:
@@ -1229,63 +1485,12 @@ def _eda_normalized_code_frame(df: pd.DataFrame, column: str, profile: dict[str,
 
 
 def _prepare_eda_wholesale_long(session: WorkbookSession, current_sheet: str) -> pd.DataFrame:
-    wholesale_bundle = _find_wholesale_bundle(session, exclude_sheet=current_sheet)
-    if wholesale_bundle is None:
+    frames = _all_wholesale_long(session, current_sheet)
+    if frames.empty:
         return pd.DataFrame(columns=["brand", "model", "modelCode", "month", "units"])
-
-    df = wholesale_bundle.dataframe.copy()
-    if df.empty:
-        return pd.DataFrame(columns=["brand", "model", "modelCode", "month", "units"])
-
-    lower_columns = {str(col).strip().lower(): col for col in df.columns}
-    brand_col = lower_columns.get("brand")
-    model_col = lower_columns.get("model")
-    model_code_col = (
-        lower_columns.get("model code")
-        or lower_columns.get("model_code")
-        or lower_columns.get("modelcode")
-    )
-    month_columns = [col for col in df.columns if _eda_month_number_from_column(col) is not None]
-    if not month_columns:
-        return pd.DataFrame(columns=["brand", "model", "modelCode", "month", "units"])
-
-    start_year = _infer_start_year(session) or datetime.now().year
-    records: list[dict[str, Any]] = []
-    current_channel = "Wholesale"
-    for _, row in df.iterrows():
-        brand_value = str(row.get(brand_col, "")).strip() if brand_col else ""
-        if brand_value.lower() == "fleet":
-            current_channel = "Fleet"
-            continue
-        if brand_value.lower() == "wholesale":
-            current_channel = "Wholesale"
-            continue
-        if current_channel != "Wholesale":
-            continue
-        if brand_value.lower().startswith("total"):
-            continue
-        model_value = str(row.get(model_col, "")).strip() if model_col else ""
-        code_value = str(row.get(model_code_col, model_value)).strip() if model_code_col else model_value
-        if not model_value and not code_value:
-            continue
-        for index, column in enumerate(month_columns):
-            month_number = _eda_month_number_from_column(column)
-            if month_number is None:
-                continue
-            year = start_year + index // 12
-            units = pd.to_numeric(row.get(column), errors="coerce")
-            if pd.isna(units):
-                continue
-            records.append(
-                {
-                    "brand": brand_value,
-                    "model": model_value,
-                    "modelCode": code_value,
-                    "month": f"{year:04d}-{month_number:02d}",
-                    "units": float(units),
-                }
-            )
-    return pd.DataFrame(records, columns=["brand", "model", "modelCode", "month", "units"])
+    return frames.rename(
+        columns={"modelName": "model", "modelCode": "modelCode", "wholesaleUnits": "units"}
+    )[["brand", "model", "modelCode", "month", "units"]]
 
 
 def _eda_month_number_from_column(column: Any) -> int | None:
@@ -1523,13 +1728,12 @@ def _build_wholesale_chart_payloads(
     if wholesale_long.empty or revenue is None or date_series.dropna().empty:
         return {}
 
-    model_code_col = columns.get("model_code")
-    if model_code_col and model_code_col in filtered_df.columns:
-        sales_codes = set(_eda_normalize_code_series(filtered_df[model_code_col]))
-        if sales_codes:
-            wholesale_long = wholesale_long[
-                wholesale_long["modelCode"].fillna("").astype(str).str.strip().str.upper().isin(sales_codes)
-            ]
+    wholesale_long = _filter_wholesale_for_sales_slice(
+        filtered_df,
+        wholesale_long,
+        model_col=columns.get("model"),
+        model_code_col=columns.get("model_code"),
+    )
     if wholesale_long.empty:
         return {}
 
@@ -2527,6 +2731,123 @@ def _find_wholesale_bundle(session: WorkbookSession, exclude_sheet: str | None =
             except Exception:
                 return None
     return None
+
+
+def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFrame:
+    sales_bundle = _get_bundle(session, sales_sheet)
+    date_col = sales_bundle.roles.get("date")
+    latest_sales_year = None
+    if date_col and date_col in sales_bundle.date_candidates:
+        parsed = sales_bundle.date_candidates[date_col].dropna()
+        if not parsed.empty:
+            latest_sales_year = int(parsed.max().year)
+
+    frames: list[pd.DataFrame] = []
+    for candidate in session.sheet_names:
+        if candidate == sales_sheet or "wholesale" not in candidate.lower():
+            continue
+        try:
+            bundle = _get_bundle(session, candidate)
+        except Exception:
+            continue
+        frame = build_wholesale_long(
+            bundle.dataframe,
+            candidate,
+            latest_sales_year=latest_sales_year,
+        )
+        if not frame.empty:
+            frames.append(frame)
+    if not frames:
+        return pd.DataFrame(
+            columns=["month", "brand", "modelName", "modelKey", "modelCode", "wholesaleUnits", "sourceSheet"]
+        )
+    combined = pd.concat(frames, ignore_index=True)
+    return (
+        combined.groupby(["month", "modelKey"], as_index=False)
+        .agg(
+            brand=("brand", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
+            modelName=("modelName", "first"),
+            modelCode=("modelCode", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
+            wholesaleUnits=("wholesaleUnits", "sum"),
+            sourceSheet=("sourceSheet", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
+        )
+    )
+
+
+def _working_days_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFrame:
+    for candidate in session.sheet_names:
+        if candidate == sales_sheet:
+            continue
+        normalized = candidate.lower().replace(" ", "_")
+        if "working_day" not in normalized:
+            continue
+        try:
+            return build_working_days_long(_get_bundle(session, candidate).dataframe)
+        except Exception:
+            return pd.DataFrame(columns=["month", "workingDays"])
+    return pd.DataFrame(columns=["month", "workingDays"])
+
+
+def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.DataFrame:
+    if sheet_name in session.monthly_facts:
+        return session.monthly_facts[sheet_name]
+    bundle = _get_bundle(session, sheet_name)
+    columns = _resolve_eda_sales_columns(bundle)
+    date_series = _eda_date_series(bundle, bundle.dataframe, columns["date"])
+    lifecycle = build_model_lifecycle(
+        bundle.dataframe,
+        date_series,
+        model_col=columns["model"],
+        qty_col=columns["quantity"],
+        brand_col=columns["brand"],
+        model_code_col=columns["model_code"],
+        cutoff_year=2024,
+    )
+    facts = build_monthly_fact_table(
+        bundle.dataframe,
+        date_series,
+        brand_col=columns["brand"],
+        model_col=columns["model"],
+        model_code_col=columns["model_code"],
+        part_number_col=columns["part_number"],
+        part_description_col=columns["part_description"],
+        qty_col=columns["quantity"],
+        revenue_col=columns["revenue"],
+        wholesale_long=_all_wholesale_long(session, sheet_name),
+        working_days_long=_working_days_long(session, sheet_name),
+        lifecycle_records=lifecycle["records"],
+        start_year=2023,
+        end_year=2026,
+    )
+    session.monthly_facts[sheet_name] = facts
+    return facts
+
+
+def _latest_sales_month_is_complete(session: WorkbookSession, sheet_name: str) -> bool:
+    bundle = _get_bundle(session, sheet_name)
+    date_col = bundle.roles.get("date")
+    if not date_col or date_col not in bundle.date_candidates:
+        return False
+    values = bundle.date_candidates[date_col].dropna()
+    if values.empty:
+        return False
+    latest = values.max()
+    return bool(latest.normalize() >= (latest + pd.offsets.MonthEnd(0)).normalize())
+
+
+def _dataframe_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for row in df.to_dict("records"):
+        clean: dict[str, Any] = {}
+        for key, value in row.items():
+            if pd.isna(value):
+                clean[key] = None
+            elif hasattr(value, "item"):
+                clean[key] = value.item()
+            else:
+                clean[key] = value
+        records.append(clean)
+    return records
 
 
 def _build_part_number_options(
