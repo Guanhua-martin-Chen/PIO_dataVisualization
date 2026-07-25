@@ -41,12 +41,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import WorkspaceHeader from "./components/WorkspaceHeader";
+import ForecastCenterPanel from "./components/ForecastCenterPanel";
 import { WorkspaceError, WorkspaceLoading } from "./components/WorkspaceState";
 import {
   AnalystPayload,
   AnalystMemoryItem,
   AnomalyCenterPayload,
   API_BASE_URL,
+  ForecastCenterPayload,
   ForecastPayload,
   HierarchicalForecastPayload,
   MonthlyFactsPayload,
@@ -145,10 +147,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [anomalyFocusPart, setAnomalyFocusPart] = useState("");
   const [forecastData, setForecastData] = useState<ForecastPayload | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
-  const [forecastView, setForecastView] = useState("detail");
-  const [hierarchicalForecast, setHierarchicalForecast] = useState<HierarchicalForecastPayload | null>(null);
+  const [forecastView, setForecastView] = useState("hierarchy");
+  const [hierarchicalForecast] = useState<HierarchicalForecastPayload | null>(null);
+  const [forecastCenterData, setForecastCenterData] = useState<ForecastCenterPayload | null>(null);
   const [hierarchicalForecastLoading, setHierarchicalForecastLoading] = useState(false);
-  const [hierarchyLevel, setHierarchyLevel] = useState<"brand" | "model" | "model_accessory">("brand");
+  const [forecastMetric, setForecastMetric] = useState<"revenue" | "quantity" | "wholesale_quantity">("revenue");
+  const [hierarchyLevel, setHierarchyLevel] = useState<"brand" | "model" | "plc" | "model_plc">("brand");
   const [hierarchyModelStrategy, setHierarchyModelStrategy] = useState("auto");
   const [useWorkingDays, setUseWorkingDays] = useState(true);
   const [useSeasonality, setUseSeasonality] = useState(true);
@@ -332,6 +336,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         loadChartData(payload.sheetName, initialChartState);
         loadAnomalyData(payload.sheetName, initialChartState);
         loadForecastData(payload.sheetName, initialChartState, "", forecastHorizon);
+        loadHierarchicalForecast(payload.sheetName, initialChartState, "brand", "revenue");
         loadAnalystMemories(payload.sheetName);
       }
     } catch (err) {
@@ -425,24 +430,26 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     sheetName: string,
     state: TableState,
     level = hierarchyLevel,
+    metric = forecastMetric,
   ) {
     const params = buildWorkspaceParams({ ...state, page: 1 });
     params.set("level", level);
+    params.set("metric", metric);
     params.set("horizon", String(forecastHorizon));
     params.set("use_working_days", String(useWorkingDays));
     params.set("use_seasonality", String(useSeasonality));
     params.set("tariff_impact_pct", String(tariffImpactPct));
-    params.set("min_monthly_volume", String(minimumMonthlyVolume));
-    params.set("model_strategy", level === "model_accessory" ? "auto" : hierarchyModelStrategy);
+    params.set("model_strategy", hierarchyModelStrategy);
+    params.set("top_n", "10");
     setHierarchicalForecastLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/hierarchical-forecast?${params.toString()}`
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/forecast-center?${params.toString()}`
       );
       if (!response.ok) {
         throw new Error((await response.json()).detail ?? "Failed to run hierarchical forecast.");
       }
-      setHierarchicalForecast((await response.json()) as HierarchicalForecastPayload);
+      setForecastCenterData((await response.json()) as ForecastCenterPayload);
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "Failed to run hierarchical forecast.");
     } finally {
@@ -807,6 +814,32 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     params.set("horizon", String(forecastHorizon));
     window.open(
       `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(workspace.sheetName)}/forecast/export.xlsx?${params.toString()}`,
+      "_blank"
+    );
+  }
+
+  function exportForecastCenterCsv() {
+    if (!workbook || !workspace) return;
+    const params = new URLSearchParams({
+      metric: forecastMetric,
+      level: hierarchyLevel,
+      horizon: String(forecastHorizon),
+      top_n: "10",
+    });
+    window.open(
+      `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(workspace.sheetName)}/forecast-center/export.csv?${params.toString()}`,
+      "_blank"
+    );
+  }
+
+  function exportForecastCenterXlsx() {
+    if (!workbook || !workspace) return;
+    const params = new URLSearchParams({
+      horizon: String(forecastHorizon),
+      top_n: "10",
+    });
+    window.open(
+      `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(workspace.sheetName)}/forecast-center/export.xlsx?${params.toString()}`,
       "_blank"
     );
   }
@@ -1208,6 +1241,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               { title: "Month", dataIndex: "month", key: "month", fixed: "left" as const },
               { title: "Brand", dataIndex: "brand", key: "brand" },
               { title: "Model", dataIndex: "modelName", key: "modelName" },
+              { title: "PLC", dataIndex: "plc", key: "plc" },
               { title: "Accessory", dataIndex: "partNumber", key: "partNumber" },
               { title: "Description", dataIndex: "partDescription", key: "partDescription", ellipsis: true },
               { title: "Lifecycle", dataIndex: "lifecycleStatus", key: "lifecycleStatus" },
@@ -2675,7 +2709,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               style={{ width: 180 }}
                               value={forecastView}
                               options={[
-                                { label: "Hierarchy", value: "hierarchy" },
+                                { label: "Forecast Center", value: "hierarchy" },
+                                { label: "Output", value: "output" },
                                 { label: "Detail", value: "detail" },
                                 { label: "Leaderboard", value: "leaderboard" },
                                 { label: "Series Table", value: "series" },
@@ -2806,7 +2841,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                       </div>
                     ) : forecastData ? (
                       <>
-                        <Row gutter={[18, 18]}>
+                        {forecastView !== "hierarchy" ? (
+                          <Row gutter={[18, 18]}>
                           <Col xs={24} md={12} xl={6}>
                             <Card className="metric-card">
                               <Statistic title="Scanned parts" value={forecastData.portfolio.summary.scannedParts} />
@@ -2827,9 +2863,76 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               <Statistic title="Do not auto-plan" value={forecastData.portfolio.summary.doNotAutoPlanCount} />
                             </Card>
                           </Col>
-                        </Row>
+                          </Row>
+                        ) : null}
 
                         {forecastView === "hierarchy" ? (
+                          <ForecastCenterPanel
+                            data={forecastCenterData}
+                            loading={hierarchicalForecastLoading}
+                            metric={forecastMetric}
+                            level={hierarchyLevel}
+                            modelStrategy={hierarchyModelStrategy}
+                            useWorkingDays={useWorkingDays}
+                            useSeasonality={useSeasonality}
+                            tariffImpactPct={tariffImpactPct}
+                            onMetricChange={(nextMetric) => {
+                              const nextLevel = nextMetric === "wholesale_quantity" && ["plc", "model_plc"].includes(hierarchyLevel)
+                                ? "model"
+                                : hierarchyLevel;
+                              setForecastMetric(nextMetric);
+                              setHierarchyLevel(nextLevel);
+                              if (workspace) {
+                                loadHierarchicalForecast(workspace.sheetName, forecastFilterState, nextLevel, nextMetric);
+                              }
+                            }}
+                            onLevelChange={(nextLevel) => {
+                              setHierarchyLevel(nextLevel);
+                              if (workspace) {
+                                loadHierarchicalForecast(workspace.sheetName, forecastFilterState, nextLevel, forecastMetric);
+                              }
+                            }}
+                            onModelStrategyChange={setHierarchyModelStrategy}
+                            onWorkingDaysChange={setUseWorkingDays}
+                            onSeasonalityChange={setUseSeasonality}
+                            onTariffImpactChange={setTariffImpactPct}
+                            onRun={() => workspace && loadHierarchicalForecast(workspace.sheetName, forecastFilterState, hierarchyLevel, forecastMetric)}
+                            onExportCsv={exportForecastCenterCsv}
+                            onExportXlsx={exportForecastCenterXlsx}
+                          />
+                        ) : null}
+
+                        {forecastView === "output" ? (
+                          <div className="tab-stack">
+                            <Card
+                              className="content-card"
+                              title="Standardized forecast output"
+                              extra={(
+                                <Space wrap>
+                                  <Button icon={<DownloadOutlined />} onClick={exportForecastCenterCsv}>Current view CSV</Button>
+                                  <Button type="primary" icon={<DownloadOutlined />} onClick={exportForecastCenterXlsx}>Download SOP Excel</Button>
+                                </Space>
+                              )}
+                            >
+                              <Alert
+                                type="info"
+                                showIcon
+                                message={`The workbook will cover ${forecastHorizon} forecast month${forecastHorizon === 1 ? "" : "s"}.`}
+                                description="The current partial month is labeled Nowcast; subsequent months are labeled Forecast. Brand is the official anchor and every lower-level revenue and quantity table includes reconciliation checks."
+                              />
+                              <div className="health-grid" style={{ marginTop: 16, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                                <div><span className="health-label">Executive Summary</span><strong>Period, totals, Top 10 PLC</strong></div>
+                                <div><span className="health-label">Revenue Forecast</span><strong>Brand → Model → PLC</strong></div>
+                                <div><span className="health-label">Quantity Forecast</span><strong>PIO quantity hierarchy</strong></div>
+                                <div><span className="health-label">Part Planning</span><strong>PIS_PNO allocation detail</strong></div>
+                                <div><span className="health-label">Wholesale Drivers</span><strong>Brand and model quantity</strong></div>
+                                <div><span className="health-label">QA & Assumptions</span><strong>Formulas and reconciliation</strong></div>
+                              </div>
+                            </Card>
+                          </div>
+                        ) : null}
+
+                        {forecastView === "legacy_hierarchy" ? (
                           <Spin spinning={hierarchicalForecastLoading}>
                             <div className="tab-stack">
                               <Card className="content-card" title="Hierarchical forecast controls">
@@ -2839,11 +2942,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                     options={[
                                       { label: "Brand", value: "brand" },
                                       { label: "Model", value: "model" },
-                                      { label: "Model × accessory", value: "model_accessory" },
+                                      { label: "Model × PLC", value: "model_plc" },
                                     ]}
                                     onChange={setHierarchyLevel}
                                   />
-                                  {hierarchyLevel !== "model_accessory" ? (
+                                  {hierarchyLevel !== "model_plc" ? (
                                     <Select
                                       value={hierarchyModelStrategy}
                                       onChange={setHierarchyModelStrategy}
@@ -2902,7 +3005,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                     Run hierarchy forecast
                                   </Button>
                                 </div>
-                                {hierarchyLevel === "model_accessory" ? (
+                                {hierarchyLevel === "model_plc" ? (
                                   <Alert
                                     style={{ marginTop: 12 }}
                                     type="info"

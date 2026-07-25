@@ -59,21 +59,27 @@ def build_wholesale_long(
     channel = "wholesale"
     for _, row in df.iterrows():
         raw_brand = str(row.get(brand_col, "")).strip() if brand_col else ""
-        if raw_brand.lower() == "fleet":
+        normalized_brand = raw_brand.lower()
+        if "fleet" in normalized_brand:
             channel = "fleet"
             continue
-        if raw_brand.lower() == "wholesale":
+        if "wholesale" in normalized_brand:
             channel = "wholesale"
             continue
-        if raw_brand and raw_brand.lower() != "nan":
+        if raw_brand and normalized_brand != "nan" and not _is_total_label(raw_brand):
             active_brand = raw_brand
         if channel != "wholesale":
             continue
 
         model_name = str(row.get(model_col, "")).strip()
-        if not model_name or model_name.lower() == "nan" or model_name.lower().startswith("total"):
+        if (
+            not model_name
+            or model_name.lower() == "nan"
+            or _is_total_label(model_name)
+            or _is_total_label(raw_brand)
+        ):
             continue
-        if active_brand.lower().startswith("total"):
+        if _is_total_label(active_brand):
             continue
         model_code = str(row.get(code_col, "")).strip() if code_col else ""
         if model_code.lower() == "nan":
@@ -134,6 +140,7 @@ def build_monthly_fact_table(
     part_description_col: str | None,
     qty_col: str | None,
     revenue_col: str | None,
+    plc_col: str | None = None,
     wholesale_long: pd.DataFrame | None = None,
     working_days_long: pd.DataFrame | None = None,
     lifecycle_records: list[dict[str, Any]] | None = None,
@@ -157,6 +164,12 @@ def build_monthly_fact_table(
         if part_description_col and part_description_col in sales_df
         else ""
     )
+    working["plc"] = (
+        sales_df[plc_col].fillna("").astype(str).str.strip()
+        if plc_col and plc_col in sales_df
+        else working["partDescription"]
+    )
+    working["plc"] = working["plc"].where(working["plc"] != "", working["partNumber"])
     working["installationQuantity"] = pd.to_numeric(sales_df[qty_col], errors="coerce").fillna(0).clip(lower=0)
     working["pioRevenue"] = (
         pd.to_numeric(sales_df[revenue_col], errors="coerce").fillna(0).clip(lower=0)
@@ -177,7 +190,7 @@ def build_monthly_fact_table(
 
     facts = (
         working.groupby(
-            ["month", "brand", "entityKey", "modelKey", "modelName", "partNumber"],
+            ["month", "brand", "entityKey", "modelKey", "modelName", "plc", "partNumber"],
             as_index=False,
             dropna=False,
         )
@@ -212,7 +225,7 @@ def build_monthly_fact_table(
     facts = facts.sort_values(["month", "brand", "modelName", "partNumber"]).reset_index(drop=True)
     return facts[
         [
-            "month", "brand", "entityKey", "modelName", "modelCode", "partNumber", "partDescription",
+            "month", "brand", "entityKey", "modelName", "modelCode", "plc", "partNumber", "partDescription",
             "lifecycleStatus", "installationQuantity", "pioRevenue", "wholesaleUnits", "pnvw",
             "workingDays", "quantityPerWorkingDay", "sourceRows",
         ]
@@ -223,10 +236,10 @@ def summarize_monthly_facts(facts: pd.DataFrame) -> dict[str, Any]:
     if facts.empty:
         return {
             "rowCount": 0, "monthCount": 0, "minMonth": None, "maxMonth": None,
-            "brandCount": 0, "modelCount": 0, "partCount": 0,
+            "brandCount": 0, "modelCount": 0, "plcCount": 0, "partCount": 0,
             "totalQuantity": 0.0, "totalRevenue": 0.0,
             "wholesaleCoveragePct": 0.0, "workingDaysCoveragePct": 0.0,
-            "grain": "month x brand x model entity x accessory",
+            "grain": "month x brand x model entity x PLC x part number",
         }
     return {
         "rowCount": int(len(facts)),
@@ -235,12 +248,13 @@ def summarize_monthly_facts(facts: pd.DataFrame) -> dict[str, Any]:
         "maxMonth": str(facts["month"].max()),
         "brandCount": int(facts["brand"].nunique()),
         "modelCount": int(facts["entityKey"].nunique()),
+        "plcCount": int(facts["plc"].nunique()) if "plc" in facts.columns else 0,
         "partCount": int(facts["partNumber"].nunique()),
         "totalQuantity": float(facts["installationQuantity"].sum()),
         "totalRevenue": float(facts["pioRevenue"].sum()),
         "wholesaleCoveragePct": round(float(facts["wholesaleUnits"].notna().mean() * 100), 2),
         "workingDaysCoveragePct": round(float(facts["workingDays"].notna().mean() * 100), 2),
-        "grain": "month x brand x model entity x accessory",
+        "grain": "month x brand x model entity x PLC x part number",
     }
 
 
@@ -259,10 +273,14 @@ def _empty_wholesale() -> pd.DataFrame:
     return pd.DataFrame(columns=["month", "brand", "modelName", "modelKey", "modelCode", "wholesaleUnits", "sourceSheet"])
 
 
+def _is_total_label(value: Any) -> bool:
+    return bool(re.search(r"\btotal\b", str(value or ""), flags=re.IGNORECASE))
+
+
 def _empty_facts() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
-            "month", "brand", "entityKey", "modelName", "modelCode", "partNumber", "partDescription",
+            "month", "brand", "entityKey", "modelName", "modelCode", "plc", "partNumber", "partDescription",
             "lifecycleStatus", "installationQuantity", "pioRevenue", "wholesaleUnits", "pnvw",
             "workingDays", "quantityPerWorkingDay", "sourceRows",
         ]

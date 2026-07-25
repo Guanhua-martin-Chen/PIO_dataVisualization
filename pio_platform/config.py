@@ -19,6 +19,7 @@ ROLE_PATTERNS = {
     "model_year": ["model year", "mdl yy", "year"],
     "part_number": ["part number", "part no", "pno", "sku", "item"],
     "part_description": ["part description", "description", "desc"],
+    "plc": ["plc", "product list catalog"],
     "installation_quantity": [
         "inst qt",
         "installation quantity",
@@ -46,6 +47,7 @@ PRIMARY_FILTER_ROLES = [
     "model_year",
     "part_number",
     "part_description",
+    "plc",
 ]
 
 FUTURE_MODULES = [

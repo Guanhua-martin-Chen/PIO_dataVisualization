@@ -83,6 +83,7 @@ MODEL_SPECS = [
     ForecastModelSpec(name="log_linear_trend", min_history=6, family="trend"),
     ForecastModelSpec(name="seasonal_naive", min_history=18, family="seasonal"),
     ForecastModelSpec(name="seasonal_mean", min_history=18, family="seasonal"),
+    ForecastModelSpec(name="ets_additive", min_history=24, family="seasonal"),
     ForecastModelSpec(name="croston_sba", min_history=8, family="intermittent"),
 ]
 
@@ -155,6 +156,8 @@ def forecast_history(history: list[float], horizon: int, model_name: str | None 
 
     if not values:
         return [0.0] * horizon
+    if chosen == "ets_additive":
+        return _ets_additive_forecast(values, horizon)
 
     for _ in range(horizon):
         prediction = _forecast_next_value(values, chosen)
@@ -1293,6 +1296,46 @@ def _croston_sba_forecast(values: list[float]) -> float:
     if interval <= 0:
         return 0.0
     return max(0.0, (1 - alpha / 2.0) * (demand / interval))
+
+
+def _ets_additive_forecast(values: list[float], horizon: int, season_length: int = 12) -> list[float]:
+    """Additive Holt-Winters level + trend + seasonality.
+
+    Fixed smoothing coefficients keep the model deterministic; rolling WAPE
+    determines whether it is preferable to simpler candidates.
+    """
+    clean = np.asarray([max(float(value), 0.0) for value in values], dtype=float)
+    if len(clean) < season_length * 2:
+        fallback = clean.tolist()
+        result: list[float] = []
+        for _ in range(horizon):
+            prediction = max(0.0, float(_forecast_next_value(fallback, "damped_trend")))
+            result.append(prediction)
+            fallback.append(prediction)
+        return result
+
+    first = clean[:season_length]
+    second = clean[season_length : season_length * 2]
+    level = float(np.mean(first))
+    trend = float((np.mean(second) - np.mean(first)) / season_length)
+    seasonals = [float(first[index] - level) for index in range(season_length)]
+    alpha, beta, gamma = 0.35, 0.10, 0.25
+
+    for index, value in enumerate(clean):
+        season_index = index % season_length
+        previous_level = level
+        previous_season = seasonals[season_index]
+        level = alpha * (float(value) - previous_season) + (1.0 - alpha) * (level + trend)
+        trend = beta * (level - previous_level) + (1.0 - beta) * trend
+        seasonals[season_index] = gamma * (float(value) - level) + (1.0 - gamma) * previous_season
+
+    return [
+        max(
+            0.0,
+            float(level + step * trend + seasonals[(len(clean) + step - 1) % season_length]),
+        )
+        for step in range(1, horizon + 1)
+    ]
 
 
 def _history_zero_share(history: list[float]) -> float:

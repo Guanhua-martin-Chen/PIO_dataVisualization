@@ -20,7 +20,7 @@ LATEST_MONTH_COMPLETENESS_THRESHOLD = 0.90
 STATISTICAL_MODELS = {
     "naive_last", "mean", "weighted_moving_average", "trailing_12_mean",
     "trend_adjusted_moving_average", "damped_trend", "log_linear_trend",
-    "seasonal_naive", "seasonal_mean", "croston_sba",
+    "seasonal_naive", "seasonal_mean", "ets_additive", "croston_sba",
 }
 MODEL_STRATEGIES = {"auto", "baseline_auto", "driver_adjusted_regression", *STATISTICAL_MODELS}
 
@@ -38,6 +38,7 @@ def build_hierarchical_forecast(
     model_strategy: str = "auto",
     limit: int = 100,
     latest_month_is_complete: bool = False,
+    check_latest_volume: bool = True,
 ) -> dict[str, Any]:
     if level not in FORECAST_LEVELS:
         raise ValueError(f"Unsupported forecast level: {level}")
@@ -65,7 +66,8 @@ def build_hierarchical_forecast(
     latest_total = float(monthly_total.get(latest_observed_month, 0.0))
     completeness_ratio = latest_total / prior_median if prior_median > 0 else None
     volume_supports_complete = (
-        completeness_ratio is None
+        not check_latest_volume
+        or completeness_ratio is None
         or completeness_ratio >= LATEST_MONTH_COMPLETENESS_THRESHOLD
     )
     resolved_latest_complete = bool(latest_month_is_complete and volume_supports_complete)

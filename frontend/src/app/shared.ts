@@ -205,6 +205,7 @@ export type MonthlyFactsPayload = {
     maxMonth: string | null;
     brandCount: number;
     modelCount: number;
+    plcCount: number;
     partCount: number;
     totalQuantity: number;
     totalRevenue: number;
@@ -219,6 +220,7 @@ export type MonthlyFactsPayload = {
     entityKey: string;
     modelName: string;
     modelCode: string;
+    plc: string;
     partNumber: string;
     partDescription: string;
     lifecycleStatus: string;
@@ -296,6 +298,86 @@ export type HierarchicalForecastPayload = {
     bias: number | null;
     forecast: Array<{ month: string; value: number }>;
     nextForecast: number;
+  }>;
+};
+
+export type ForecastCenterPayload = {
+  summary: {
+    metric: "quantity" | "revenue" | "wholesale_quantity";
+    metricLabel: string;
+    unit: "USD" | "units";
+    level: "brand" | "model" | "plc" | "model_plc";
+    seriesCount: number;
+    allModelSeriesCount: number;
+    allModelPlcSeriesCount: number;
+    topN: number;
+    latestCompleteMonth: string | null;
+    latestObservedMonth: string | null;
+    dataThrough: string | null;
+    latestMonthExcluded: boolean;
+    latestMonthCompletenessRatio: number | null;
+    horizon: number;
+    forecastMonths: string[];
+    nowcastMonths: string[];
+    pureForecastMonths: string[];
+    periodExplanation: string;
+    weightedWape: number | null;
+    accuracyPct: number | null;
+    modelCounts: Record<string, number>;
+    brandDefinition: string;
+    reconciliation: {
+      status: "PASS" | "FAIL";
+      brandToModelMaxAbsDelta: number;
+      modelToPlcMaxAbsDelta: number;
+      tolerance: number;
+    };
+    factors: {
+      workingDays?: boolean;
+      seasonality?: boolean;
+      tariffImpactPct?: number;
+      modelStrategy?: string;
+    };
+    formulaCatalog: Array<{ name: string; formula: string; logic: string }>;
+    accuracyDefinition: string | null;
+  };
+  records: ForecastCenterRecord[];
+  topAccessories: ForecastCenterRecord[];
+  brandRecords: ForecastCenterRecord[];
+};
+
+export type ForecastCenterRecord = {
+  seriesKey: string;
+  level: string;
+  metric?: string;
+  rank?: number;
+  brand: string;
+  brandName: string;
+  modelName?: string;
+  entityKey?: string;
+  plc?: string;
+  lifecycleStatus?: string;
+  historyVolume?: number;
+  historyQuantity?: number;
+  historyRevenue?: number;
+  historyRevenueSharePct?: number;
+  expectedUnitRevenue?: number | null;
+  selectedModel: string;
+  selectionNote?: string;
+  wape?: number | null;
+  accuracyPct?: number | null;
+  nextForecast: number;
+  forecast: Array<{
+    month: string;
+    value: number;
+    forecastType: "Nowcast" | "Forecast";
+    actualToDate?: number | null;
+    workingDays?: number | null;
+    estimatedElapsedWorkingDays?: number | null;
+    completionRatio?: number;
+    statisticalBaseline?: number;
+    allocationShare?: number;
+    reconciliationFactor?: number;
+    parentForecast?: number;
   }>;
 };
 
