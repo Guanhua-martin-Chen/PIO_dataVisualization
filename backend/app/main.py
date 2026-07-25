@@ -46,6 +46,8 @@ from pio_platform.fact_table import (
 )
 from pio_platform.model_entities import build_model_entity_map, build_model_lifecycle
 from pio_platform.hierarchical_forecasting import build_hierarchical_forecast
+from pio_platform.forecast_center import build_forecast_center, build_part_planning_records
+from pio_platform.sop_workbook import build_sop_workbook_bytes
 from pio_platform.pivot import build_pivot, is_wide_month_matrix, wide_brand_series
 from pio_platform.profiling import build_column_profile, build_insights, compute_kpis
 
@@ -58,6 +60,7 @@ ROLE_LABELS = {
     "model_year": "Model year",
     "part_number": "Part number",
     "part_description": "Part description",
+    "plc": "PLC",
     "installation_quantity": "Installation quantity",
     "revenue": "Revenue",
 }
@@ -75,6 +78,7 @@ FIELD_GROUPS = {
     "model_year": "Vehicle",
     "part_number": "Part",
     "part_description": "Part",
+    "plc": "Part",
     "installation_quantity": "Quantity",
     "revenue": "Revenue",
 }
@@ -539,6 +543,181 @@ def get_hierarchical_forecast(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center")
+def get_forecast_center(
+    workbook_id: str,
+    sheet_name: str,
+    metric: str = Query(default="revenue"),
+    level: str = Query(default="brand"),
+    horizon: int = Query(default=3, ge=1, le=12),
+    use_working_days: bool = Query(default=True),
+    use_seasonality: bool = Query(default=True),
+    tariff_impact_pct: float = Query(default=0.0, ge=-100.0, le=100.0),
+    model_strategy: str = Query(default="auto"),
+    top_n: int = Query(default=10, ge=1, le=21),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    part: list[str] = Query(default=[]),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+) -> dict[str, Any]:
+    session = _get_session(workbook_id)
+    facts = _get_monthly_fact_table(session, sheet_name).copy()
+    if brand:
+        facts = facts[facts["brand"].isin(brand)]
+    if model:
+        facts = facts[facts["modelName"].isin(model)]
+    if part:
+        facts = facts[facts["partNumber"].isin(part) | facts["plc"].isin(part)]
+    if start_date:
+        facts = facts[facts["month"] >= str(start_date)[:7]]
+    if end_date:
+        facts = facts[facts["month"] <= str(end_date)[:7]]
+    try:
+        return build_forecast_center(
+            facts,
+            _working_days_long(session, sheet_name),
+            _all_wholesale_long(session, sheet_name),
+            metric=metric,
+            level=level,
+            horizon=horizon,
+            use_working_days=use_working_days,
+            use_seasonality=use_seasonality,
+            tariff_impact_pct=tariff_impact_pct,
+            model_strategy=model_strategy,
+            top_n=top_n,
+            latest_sales_month_is_complete=_latest_sales_month_is_complete(session, sheet_name),
+            latest_sales_date=_latest_sales_date(session, sheet_name),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/export.csv")
+def export_forecast_center_csv(
+    workbook_id: str,
+    sheet_name: str,
+    metric: str = Query(default="revenue"),
+    level: str = Query(default="brand"),
+    horizon: int = Query(default=3, ge=1, le=12),
+    top_n: int = Query(default=10, ge=1, le=21),
+) -> StreamingResponse:
+    session = _get_session(workbook_id)
+    payload = build_forecast_center(
+        _get_monthly_fact_table(session, sheet_name),
+        _working_days_long(session, sheet_name),
+        _all_wholesale_long(session, sheet_name),
+        metric=metric,
+        level=level,
+        horizon=horizon,
+        top_n=top_n,
+        latest_sales_month_is_complete=_latest_sales_month_is_complete(session, sheet_name),
+        latest_sales_date=_latest_sales_date(session, sheet_name),
+    )
+    rows: list[dict[str, Any]] = []
+    for record in payload["records"]:
+        for forecast in record.get("forecast", []):
+            rows.append(
+                {
+                    "metric": metric,
+                    "level": record.get("level", level),
+                    "brand": record.get("brand", ""),
+                    "brandName": record.get("brandName", ""),
+                    "modelName": record.get("modelName", ""),
+                    "plc": record.get("plc", ""),
+                    "rank": record.get("rank"),
+                    "selectedModel": record.get("selectedModel", ""),
+                    "month": forecast.get("month"),
+                    "forecastType": forecast.get("forecastType", "Forecast"),
+                    "value": forecast.get("value", 0.0),
+                    "allocationShare": forecast.get("allocationShare"),
+                    "reconciliationFactor": forecast.get("reconciliationFactor"),
+                }
+            )
+    output = StringIO()
+    pd.DataFrame(rows).to_csv(output, index=False)
+    output.seek(0)
+    filename = f"{session.filename.rsplit('.', 1)[0]}-forecast-center-{metric}-{level}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/export.xlsx")
+def export_forecast_center_xlsx(
+    workbook_id: str,
+    sheet_name: str,
+    horizon: int = Query(default=3, ge=1, le=12),
+    top_n: int = Query(default=10, ge=1, le=21),
+) -> StreamingResponse:
+    session = _get_session(workbook_id)
+    facts = _get_monthly_fact_table(session, sheet_name)
+    working_days = _working_days_long(session, sheet_name)
+    wholesale_long = _all_wholesale_long(session, sheet_name)
+    latest_complete = _latest_sales_month_is_complete(session, sheet_name)
+    latest_date = _latest_sales_date(session, sheet_name)
+    common = {
+        "horizon": horizon,
+        "top_n": top_n,
+        "latest_sales_month_is_complete": latest_complete,
+        "latest_sales_date": latest_date,
+        "include_all_records": True,
+    }
+    revenue = build_forecast_center(
+        facts,
+        working_days,
+        wholesale_long,
+        metric="revenue",
+        level="brand",
+        **common,
+    )
+    quantity = build_forecast_center(
+        facts,
+        working_days,
+        wholesale_long,
+        metric="quantity",
+        level="brand",
+        **common,
+    )
+    wholesale = build_forecast_center(
+        facts,
+        working_days,
+        wholesale_long,
+        metric="wholesale_quantity",
+        level="brand",
+        **common,
+    )
+    part_quantity = build_part_planning_records(
+        facts,
+        quantity.get("modelPlcRecords", []),
+        metric="quantity",
+        latest_complete_month=str(quantity["summary"]["latestCompleteMonth"]),
+    )
+    part_revenue = build_part_planning_records(
+        facts,
+        revenue.get("modelPlcRecords", []),
+        metric="revenue",
+        latest_complete_month=str(revenue["summary"]["latestCompleteMonth"]),
+    )
+    output = build_sop_workbook_bytes(
+        source_filename=session.filename,
+        revenue=revenue,
+        quantity=quantity,
+        wholesale=wholesale,
+        part_quantity=part_quantity,
+        part_revenue=part_revenue,
+        working_days=_dataframe_records(working_days),
+    )
+    filename = f"{session.filename.rsplit('.', 1)[0]}-PIO-Forecast-SOP.xlsx"
+    return StreamingResponse(
+        iter([output]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast/export.csv")
@@ -1087,6 +1266,7 @@ def _resolve_eda_sales_columns(bundle: DatasetBundle) -> dict[str, str | None]:
         "model_code": pick("PIS_SERI"),
         "part_number": pick(bundle.roles.get("part_number"), "PIS_PNO"),
         "part_description": pick(bundle.roles.get("part_description"), "Part Description"),
+        "plc": pick(bundle.roles.get("plc"), "PLC"),
         "quantity": pick(bundle.roles.get("installation_quantity"), "SumOfPIS_INST_QT"),
         "revenue": pick(bundle.roles.get("revenue"), "SumOfPIS_CRP_CFM_PRI"),
     }
@@ -2811,6 +2991,7 @@ def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.Dat
         model_code_col=columns["model_code"],
         part_number_col=columns["part_number"],
         part_description_col=columns["part_description"],
+        plc_col=columns["plc"],
         qty_col=columns["quantity"],
         revenue_col=columns["revenue"],
         wholesale_long=_all_wholesale_long(session, sheet_name),
@@ -2833,6 +3014,15 @@ def _latest_sales_month_is_complete(session: WorkbookSession, sheet_name: str) -
         return False
     latest = values.max()
     return bool(latest.normalize() >= (latest + pd.offsets.MonthEnd(0)).normalize())
+
+
+def _latest_sales_date(session: WorkbookSession, sheet_name: str) -> pd.Timestamp | None:
+    bundle = _get_bundle(session, sheet_name)
+    date_col = bundle.roles.get("date")
+    if not date_col or date_col not in bundle.date_candidates:
+        return None
+    values = bundle.date_candidates[date_col].dropna()
+    return pd.Timestamp(values.max()) if not values.empty else None
 
 
 def _dataframe_records(df: pd.DataFrame) -> list[dict[str, Any]]:

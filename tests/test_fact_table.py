@@ -32,6 +32,20 @@ class MonthlyFactTableTests(unittest.TestCase):
         elantra_feb = result[(result["modelKey"] == "ELANTRA") & (result["month"] == "2025-02")]
         self.assertEqual(float(elantra_feb.iloc[0]["wholesaleUnits"]), 0.0)
 
+    def test_wholesale_excludes_total_and_fleet_sections(self) -> None:
+        wholesale = pd.DataFrame(
+            {
+                "Brand": ["HMA", None, None, "GMA", "▣ Fleet H/G/K Wholesale", "HMA", None],
+                "Model": ["Elantra", "HMA Total", "Tucson", "G70", None, "Elantra", "Tucson"],
+                "Jan": [100, 500, 200, 50, None, 999, 999],
+            }
+        )
+
+        result = build_wholesale_long(wholesale, "2026 Vehicle Wholesale")
+
+        self.assertEqual(set(result["modelName"]), {"Elantra", "Tucson", "G70"})
+        self.assertEqual(float(result["wholesaleUnits"].sum()), 350.0)
+
     def test_fact_grain_combines_sales_wholesale_and_working_days(self) -> None:
         sales = pd.DataFrame(
             {
@@ -40,6 +54,7 @@ class MonthlyFactTableTests(unittest.TestCase):
                 "Code": [4, 4, 4],
                 "Part": ["P1", "P1", "P2"],
                 "Description": ["Mat", "Mat", "Lock"],
+                "PLC": ["Floor Mat", "Floor Mat", "Wheel Lock"],
                 "Qty": [10, 5, 4],
                 "Revenue": [100, 50, 80],
             }
@@ -62,6 +77,7 @@ class MonthlyFactTableTests(unittest.TestCase):
             model_code_col="Code",
             part_number_col="Part",
             part_description_col="Description",
+            plc_col="PLC",
             qty_col="Qty",
             revenue_col="Revenue",
             wholesale_long=wholesale,
@@ -74,7 +90,9 @@ class MonthlyFactTableTests(unittest.TestCase):
         self.assertEqual(float(elantra["installationQuantity"]), 15.0)
         self.assertEqual(float(elantra["pnvw"]), 1.5)
         self.assertEqual(float(elantra["quantityPerWorkingDay"]), 0.75)
-        self.assertEqual(summary["grain"], "month x brand x model entity x accessory")
+        self.assertEqual(elantra["plc"], "Floor Mat")
+        self.assertEqual(summary["plcCount"], 2)
+        self.assertEqual(summary["grain"], "month x brand x model entity x PLC x part number")
         self.assertEqual(summary["workingDaysCoveragePct"], 100.0)
 
 
