@@ -55,7 +55,7 @@ from pio_platform.profiling import build_column_profile, build_insights, compute
 # ── Role / group maps ─────────────────────────────────────────────────────────
 ROLE_LABELS = {
     "date": "Time",
-    "brand": "Brand",
+    "brand": "Source H/K code",
     "model": "Vehicle model",
     "model_year": "Model year",
     "part_number": "Part number",
@@ -474,7 +474,7 @@ def get_monthly_facts(
     session = _get_session(workbook_id)
     facts = _get_monthly_fact_table(session, sheet_name).copy()
     if brand:
-        facts = facts[facts["brand"].isin(brand)]
+        facts = _filter_fact_brand_values(facts, brand)
     if model:
         facts = facts[facts["modelName"].isin(model)]
     if part:
@@ -518,7 +518,7 @@ def get_hierarchical_forecast(
     session = _get_session(workbook_id)
     facts = _get_monthly_fact_table(session, sheet_name).copy()
     if brand:
-        facts = facts[facts["brand"].isin(brand)]
+        facts = _filter_fact_brand_values(facts, brand)
     if model:
         facts = facts[facts["modelName"].isin(model)]
     if part:
@@ -527,6 +527,7 @@ def get_hierarchical_forecast(
         facts = facts[facts["month"] >= str(start_date)[:7]]
     if end_date:
         facts = facts[facts["month"] <= str(end_date)[:7]]
+    latest_month_is_complete, _ = _forecast_cutoff_context(session, sheet_name, end_date)
     try:
         return build_hierarchical_forecast(
             facts,
@@ -539,7 +540,7 @@ def get_hierarchical_forecast(
             min_monthly_volume=min_monthly_volume,
             model_strategy=model_strategy,
             limit=limit,
-            latest_month_is_complete=_latest_sales_month_is_complete(session, sheet_name),
+            latest_month_is_complete=latest_month_is_complete,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -556,6 +557,7 @@ def get_forecast_center(
     use_seasonality: bool = Query(default=True),
     tariff_impact_pct: float = Query(default=0.0, ge=-100.0, le=100.0),
     model_strategy: str = Query(default="auto"),
+    min_monthly_volume: float = Query(default=5.0, ge=0.0),
     top_n: int = Query(default=10, ge=1, le=21),
     brand: list[str] = Query(default=[]),
     model: list[str] = Query(default=[]),
@@ -565,21 +567,26 @@ def get_forecast_center(
 ) -> dict[str, Any]:
     session = _get_session(workbook_id)
     facts = _get_monthly_fact_table(session, sheet_name).copy()
-    if brand:
-        facts = facts[facts["brand"].isin(brand)]
-    if model:
-        facts = facts[facts["modelName"].isin(model)]
-    if part:
-        facts = facts[facts["partNumber"].isin(part) | facts["plc"].isin(part)]
-    if start_date:
-        facts = facts[facts["month"] >= str(start_date)[:7]]
-    if end_date:
-        facts = facts[facts["month"] <= str(end_date)[:7]]
+    wholesale_long = _all_wholesale_long(session, sheet_name)
+    facts, wholesale_long = _filter_forecast_sources(
+        facts,
+        wholesale_long,
+        brand=brand,
+        model=model,
+        part=part,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    latest_month_is_complete, latest_sales_date = _forecast_cutoff_context(
+        session,
+        sheet_name,
+        end_date,
+    )
     try:
         return build_forecast_center(
             facts,
             _working_days_long(session, sheet_name),
-            _all_wholesale_long(session, sheet_name),
+            wholesale_long,
             metric=metric,
             level=level,
             horizon=horizon,
@@ -587,9 +594,10 @@ def get_forecast_center(
             use_seasonality=use_seasonality,
             tariff_impact_pct=tariff_impact_pct,
             model_strategy=model_strategy,
+            min_monthly_volume=min_monthly_volume,
             top_n=top_n,
-            latest_sales_month_is_complete=_latest_sales_month_is_complete(session, sheet_name),
-            latest_sales_date=_latest_sales_date(session, sheet_name),
+            latest_sales_month_is_complete=latest_month_is_complete,
+            latest_sales_date=latest_sales_date,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -603,18 +611,49 @@ def export_forecast_center_csv(
     level: str = Query(default="brand"),
     horizon: int = Query(default=3, ge=1, le=12),
     top_n: int = Query(default=10, ge=1, le=21),
+    use_working_days: bool = Query(default=True),
+    use_seasonality: bool = Query(default=True),
+    tariff_impact_pct: float = Query(default=0.0, ge=-100.0, le=100.0),
+    model_strategy: str = Query(default="auto"),
+    min_monthly_volume: float = Query(default=5.0, ge=0.0),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    part: list[str] = Query(default=[]),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
 ) -> StreamingResponse:
     session = _get_session(workbook_id)
+    facts = _get_monthly_fact_table(session, sheet_name).copy()
+    wholesale_long = _all_wholesale_long(session, sheet_name)
+    facts, wholesale_long = _filter_forecast_sources(
+        facts,
+        wholesale_long,
+        brand=brand,
+        model=model,
+        part=part,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    latest_month_is_complete, latest_sales_date = _forecast_cutoff_context(
+        session,
+        sheet_name,
+        end_date,
+    )
     payload = build_forecast_center(
-        _get_monthly_fact_table(session, sheet_name),
+        facts,
         _working_days_long(session, sheet_name),
-        _all_wholesale_long(session, sheet_name),
+        wholesale_long,
         metric=metric,
         level=level,
         horizon=horizon,
         top_n=top_n,
-        latest_sales_month_is_complete=_latest_sales_month_is_complete(session, sheet_name),
-        latest_sales_date=_latest_sales_date(session, sheet_name),
+        use_working_days=use_working_days,
+        use_seasonality=use_seasonality,
+        tariff_impact_pct=tariff_impact_pct,
+        model_strategy=model_strategy,
+        min_monthly_volume=min_monthly_volume,
+        latest_sales_month_is_complete=latest_month_is_complete,
+        latest_sales_date=latest_sales_date,
     )
     rows: list[dict[str, Any]] = []
     for record in payload["records"]:
@@ -629,6 +668,7 @@ def export_forecast_center_csv(
                     "plc": record.get("plc", ""),
                     "rank": record.get("rank"),
                     "selectedModel": record.get("selectedModel", ""),
+                    "allocationRoute": record.get("allocationRoute", ""),
                     "month": forecast.get("month"),
                     "forecastType": forecast.get("forecastType", "Forecast"),
                     "value": forecast.get("value", 0.0),
@@ -653,6 +693,11 @@ def export_forecast_center_xlsx(
     sheet_name: str,
     horizon: int = Query(default=3, ge=1, le=12),
     top_n: int = Query(default=10, ge=1, le=21),
+    use_working_days: bool = Query(default=True),
+    use_seasonality: bool = Query(default=True),
+    tariff_impact_pct: float = Query(default=0.0, ge=-100.0, le=100.0),
+    model_strategy: str = Query(default="auto"),
+    min_monthly_volume: float = Query(default=5.0, ge=0.0),
 ) -> StreamingResponse:
     session = _get_session(workbook_id)
     facts = _get_monthly_fact_table(session, sheet_name)
@@ -666,6 +711,11 @@ def export_forecast_center_xlsx(
         "latest_sales_month_is_complete": latest_complete,
         "latest_sales_date": latest_date,
         "include_all_records": True,
+        "use_working_days": use_working_days,
+        "use_seasonality": use_seasonality,
+        "tariff_impact_pct": tariff_impact_pct,
+        "model_strategy": model_strategy,
+        "min_monthly_volume": min_monthly_volume,
     }
     revenue = build_forecast_center(
         facts,
@@ -1234,6 +1284,14 @@ def _build_eda_dashboard(
         model_code_col=columns["model_code"],
         cutoff_year=2024,
     )
+    source_anchor_audit = _build_eda_source_anchor_audit(
+        df,
+        columns,
+        date_series,
+        revenue,
+        quantity,
+        _get_monthly_fact_table(session, sheet_name),
+    )
 
     return {
         "overview": overview,
@@ -1247,6 +1305,132 @@ def _build_eda_dashboard(
         "relationship": relationship,
         "modelEntities": model_entities,
         "modelLifecycle": model_lifecycle,
+        "sourceAnchorAudit": source_anchor_audit,
+    }
+
+
+def _build_eda_source_anchor_audit(
+    df: pd.DataFrame,
+    columns: dict[str, str | None],
+    date_series: pd.Series,
+    revenue: pd.Series | None,
+    quantity: pd.Series | None,
+    facts: pd.DataFrame,
+) -> dict[str, Any]:
+    required = [columns.get("brand"), columns.get("model")]
+    if any(column is None or column not in df.columns for column in required):
+        return {"latestMonth": None, "summary": [], "sourceHModels": []}
+
+    source_col = str(columns["brand"])
+    model_col = str(columns["model"])
+    working = pd.DataFrame(index=df.index)
+    working["sourceCode"] = df[source_col].fillna("").astype(str).str.strip().str.upper()
+    working["modelName"] = df[model_col].fillna("").astype(str).str.strip()
+    working["date"] = pd.to_datetime(date_series.reindex(df.index), errors="coerce")
+    working["month"] = working["date"].dt.to_period("M").astype(str)
+    working["quantity"] = (
+        pd.to_numeric(quantity.reindex(df.index), errors="coerce").fillna(0.0).clip(lower=0)
+        if quantity is not None
+        else 0.0
+    )
+    working["revenue"] = (
+        pd.to_numeric(revenue.reindex(df.index), errors="coerce").fillna(0.0).clip(lower=0)
+        if revenue is not None
+        else 0.0
+    )
+    model_year_col = columns.get("model_year")
+    working["modelYear"] = (
+        df[model_year_col]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+        if model_year_col and model_year_col in df.columns
+        else ""
+    )
+
+    def mode_text(values: pd.Series) -> str:
+        cleaned = values.dropna().astype(str).str.strip()
+        cleaned = cleaned[(cleaned != "") & (cleaned.str.lower() != "nan")]
+        return cleaned.mode().iloc[0] if not cleaned.empty else ""
+
+    mapping = (
+        facts[["brand", "modelName", "anchorBrand", "anchorMappingMethod"]]
+        .groupby(["brand", "modelName"], as_index=False, dropna=False)
+        .agg(
+            anchorBrand=("anchorBrand", mode_text),
+            anchorMappingMethod=("anchorMappingMethod", mode_text),
+        )
+        .rename(columns={"brand": "sourceCode"})
+        if not facts.empty
+        else pd.DataFrame(
+            columns=["sourceCode", "modelName", "anchorBrand", "anchorMappingMethod"]
+        )
+    )
+    working = working.merge(mapping, on=["sourceCode", "modelName"], how="left")
+    working["anchorBrand"] = working["anchorBrand"].fillna(
+        working["sourceCode"].map({"K": "KUS"}).fillna("HMA")
+    )
+    working["anchorMappingMethod"] = working["anchorMappingMethod"].fillna(
+        working["sourceCode"].map({"K": "source_brand_kus"}).fillna("hma_default_fallback")
+    )
+    working = working[(working["modelName"] != "") & working["date"].notna()].copy()
+    if working.empty:
+        return {"latestMonth": None, "summary": [], "sourceHModels": []}
+
+    latest_month = str(working["month"].max())
+    summary = (
+        working[working["month"] == latest_month]
+        .groupby(["sourceCode", "anchorBrand"], as_index=False, dropna=False)
+        .agg(pioQuantity=("quantity", "sum"), pioRevenue=("revenue", "sum"))
+        .sort_values(["sourceCode", "anchorBrand"], kind="stable")
+    )
+
+    def unique_text(values: pd.Series) -> list[str]:
+        cleaned = {
+            str(value).strip()
+            for value in values
+            if pd.notna(value)
+            and str(value).strip()
+            and str(value).strip().lower() != "nan"
+        }
+        return sorted(cleaned, key=lambda value: (int(value) if value.isdigit() else 9999, value))
+
+    source_h_records: list[dict[str, Any]] = []
+    source_h = working[working["sourceCode"] == "H"]
+    for (anchor, model, method), group in source_h.groupby(
+        ["anchorBrand", "modelName", "anchorMappingMethod"],
+        dropna=False,
+        sort=True,
+    ):
+        latest_quantity = float(group.loc[group["month"] == latest_month, "quantity"].sum())
+        source_h_records.append(
+            {
+                "sourceCode": "H",
+                "anchorBrand": str(anchor),
+                "modelName": str(model),
+                "mappingMethod": str(method),
+                "modelYears": unique_text(group["modelYear"]),
+                "salesYears": [str(year) for year in sorted(group["date"].dt.year.dropna().astype(int).unique())],
+                "firstSaleDate": group["date"].min().date().isoformat(),
+                "lastSaleDate": group["date"].max().date().isoformat(),
+                "latestMonth": latest_month,
+                "latestMonthQuantity": latest_quantity,
+                "totalQuantity": float(group["quantity"].sum()),
+                "totalRevenue": float(group["revenue"].sum()),
+            }
+        )
+    source_h_records.sort(
+        key=lambda record: (
+            str(record["anchorBrand"]),
+            -float(record["latestMonthQuantity"]),
+            str(record["modelName"]),
+        )
+    )
+    return {
+        "latestMonth": latest_month,
+        "summary": _dataframe_records(summary),
+        "sourceHModels": source_h_records,
     }
 
 
@@ -1263,6 +1447,7 @@ def _resolve_eda_sales_columns(bundle: DatasetBundle) -> dict[str, str | None]:
         "date": pick(bundle.roles.get("date"), "PIS_MST_IVC_DT", "YYYYMM"),
         "brand": pick("PIS_CMP_KND", bundle.roles.get("brand")),
         "model": pick(bundle.roles.get("model"), "Model"),
+        "model_year": pick(bundle.roles.get("model_year"), "PIS_MDL_YY", "Model Year"),
         "model_code": pick("PIS_SERI"),
         "part_number": pick(bundle.roles.get("part_number"), "PIS_PNO"),
         "part_description": pick(bundle.roles.get("part_description"), "Part Description"),
@@ -2913,7 +3098,40 @@ def _find_wholesale_bundle(session: WorkbookSession, exclude_sheet: str | None =
     return None
 
 
+def _forecast_sales_sheet_name(session: WorkbookSession, requested_sheet: str) -> str:
+    """Resolve Forecast Center to the governed PIO sales source.
+
+    Data Workspace may browse any sheet, but Forecast Center must not reinterpret
+    a wholesale, working-days, or legend sheet as the PIO transaction fact.
+    """
+    for candidate in session.sheet_names:
+        if candidate.strip().lower() == "pio_sales_data":
+            return candidate
+
+    ordered_candidates = [
+        requested_sheet,
+        *[candidate for candidate in session.sheet_names if candidate != requested_sheet],
+    ]
+    for candidate in ordered_candidates:
+        try:
+            bundle = _get_bundle(session, candidate)
+        except Exception:
+            continue
+        columns = _resolve_eda_sales_columns(bundle)
+        date_col = columns.get("date")
+        if (
+            date_col
+            and date_col in bundle.date_candidates
+            and columns.get("model")
+            and columns.get("quantity")
+            and columns.get("revenue")
+        ):
+            return candidate
+    raise ValueError("Forecast Center requires a PIO sales sheet with date, model, quantity, and revenue fields.")
+
+
 def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFrame:
+    sales_sheet = _forecast_sales_sheet_name(session, sales_sheet)
     sales_bundle = _get_bundle(session, sales_sheet)
     date_col = sales_bundle.roles.get("date")
     latest_sales_year = None
@@ -2939,22 +3157,27 @@ def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFr
             frames.append(frame)
     if not frames:
         return pd.DataFrame(
-            columns=["month", "brand", "modelName", "modelKey", "modelCode", "wholesaleUnits", "sourceSheet"]
+            columns=[
+                "month", "brand", "anchorBrand", "modelName", "modelKey", "modelCode",
+                "wholesaleUnits", "channel", "sourceSheet",
+            ]
         )
     combined = pd.concat(frames, ignore_index=True)
     return (
-        combined.groupby(["month", "modelKey"], as_index=False)
+        combined.groupby(["month", "anchorBrand", "modelKey"], as_index=False)
         .agg(
             brand=("brand", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
             modelName=("modelName", "first"),
             modelCode=("modelCode", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
             wholesaleUnits=("wholesaleUnits", "sum"),
+            channel=("channel", "first"),
             sourceSheet=("sourceSheet", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
         )
     )
 
 
 def _working_days_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFrame:
+    sales_sheet = _forecast_sales_sheet_name(session, sales_sheet)
     for candidate in session.sheet_names:
         if candidate == sales_sheet:
             continue
@@ -2969,9 +3192,10 @@ def _working_days_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFra
 
 
 def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.DataFrame:
-    if sheet_name in session.monthly_facts:
-        return session.monthly_facts[sheet_name]
-    bundle = _get_bundle(session, sheet_name)
+    sales_sheet = _forecast_sales_sheet_name(session, sheet_name)
+    if sales_sheet in session.monthly_facts:
+        return session.monthly_facts[sales_sheet]
+    bundle = _get_bundle(session, sales_sheet)
     columns = _resolve_eda_sales_columns(bundle)
     date_series = _eda_date_series(bundle, bundle.dataframe, columns["date"])
     lifecycle = build_model_lifecycle(
@@ -2994,18 +3218,18 @@ def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.Dat
         plc_col=columns["plc"],
         qty_col=columns["quantity"],
         revenue_col=columns["revenue"],
-        wholesale_long=_all_wholesale_long(session, sheet_name),
-        working_days_long=_working_days_long(session, sheet_name),
+        wholesale_long=_all_wholesale_long(session, sales_sheet),
+        working_days_long=_working_days_long(session, sales_sheet),
         lifecycle_records=lifecycle["records"],
         start_year=2023,
         end_year=2026,
     )
-    session.monthly_facts[sheet_name] = facts
+    session.monthly_facts[sales_sheet] = facts
     return facts
 
 
 def _latest_sales_month_is_complete(session: WorkbookSession, sheet_name: str) -> bool:
-    bundle = _get_bundle(session, sheet_name)
+    bundle = _get_bundle(session, _forecast_sales_sheet_name(session, sheet_name))
     date_col = bundle.roles.get("date")
     if not date_col or date_col not in bundle.date_candidates:
         return False
@@ -3017,12 +3241,94 @@ def _latest_sales_month_is_complete(session: WorkbookSession, sheet_name: str) -
 
 
 def _latest_sales_date(session: WorkbookSession, sheet_name: str) -> pd.Timestamp | None:
-    bundle = _get_bundle(session, sheet_name)
+    bundle = _get_bundle(session, _forecast_sales_sheet_name(session, sheet_name))
     date_col = bundle.roles.get("date")
     if not date_col or date_col not in bundle.date_candidates:
         return None
     values = bundle.date_candidates[date_col].dropna()
     return pd.Timestamp(values.max()) if not values.empty else None
+
+
+def _forecast_cutoff_context(
+    session: WorkbookSession,
+    sheet_name: str,
+    end_date: str = "",
+) -> tuple[bool, pd.Timestamp | None]:
+    latest_sales_date = _latest_sales_date(session, sheet_name)
+    if latest_sales_date is None or not end_date:
+        return _latest_sales_month_is_complete(session, sheet_name), latest_sales_date
+    try:
+        requested_end = pd.Timestamp(end_date)
+    except (TypeError, ValueError):
+        return _latest_sales_month_is_complete(session, sheet_name), latest_sales_date
+    requested_month = requested_end.to_period("M")
+    latest_month = latest_sales_date.to_period("M")
+    if requested_month < latest_month:
+        complete_month_end = requested_month.end_time.normalize()
+        return True, complete_month_end
+    return _latest_sales_month_is_complete(session, sheet_name), latest_sales_date
+
+
+def _filter_fact_brand_values(
+    facts: pd.DataFrame,
+    brand: list[str],
+) -> pd.DataFrame:
+    if not brand or facts.empty:
+        return facts
+    governed_anchors = {"HMA", "GMA", "KUS"}
+    requested_anchor_values = {value for value in brand if value in governed_anchors}
+    requested_source_values = {value for value in brand if value not in governed_anchors}
+    fact_mask = pd.Series(False, index=facts.index)
+    if requested_anchor_values and "anchorBrand" in facts.columns:
+        fact_mask |= facts["anchorBrand"].isin(requested_anchor_values)
+    if requested_source_values and "brand" in facts.columns:
+        fact_mask |= facts["brand"].isin(requested_source_values)
+    return facts[fact_mask]
+
+
+def _filter_forecast_sources(
+    facts: pd.DataFrame,
+    wholesale_long: pd.DataFrame,
+    *,
+    brand: list[str],
+    model: list[str],
+    part: list[str],
+    start_date: str,
+    end_date: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    filtered_facts = facts.copy()
+    filtered_wholesale = wholesale_long.copy()
+    if brand:
+        governed_anchors = {"HMA", "GMA", "KUS"}
+        requested_anchor_values = {value for value in brand if value in governed_anchors}
+        filtered_facts = _filter_fact_brand_values(filtered_facts, brand)
+        resolved_anchors = set(requested_anchor_values)
+        if "anchorBrand" in filtered_facts.columns:
+            resolved_anchors.update(
+                str(value)
+                for value in filtered_facts["anchorBrand"].dropna().unique()
+                if str(value) in governed_anchors
+            )
+        if resolved_anchors and "anchorBrand" in filtered_wholesale.columns:
+            filtered_wholesale = filtered_wholesale[
+                filtered_wholesale["anchorBrand"].isin(resolved_anchors)
+            ]
+    if model:
+        filtered_facts = filtered_facts[filtered_facts["modelName"].isin(model)]
+        filtered_wholesale = filtered_wholesale[filtered_wholesale["modelName"].isin(model)]
+    if part:
+        filtered_facts = filtered_facts[
+            filtered_facts["partNumber"].isin(part) | filtered_facts["plc"].isin(part)
+        ]
+    if start_date:
+        start_month = str(start_date)[:7]
+        filtered_facts = filtered_facts[filtered_facts["month"] >= start_month]
+        filtered_wholesale = filtered_wholesale[filtered_wholesale["month"] >= start_month]
+    if end_date:
+        end_month = str(end_date)[:7]
+        filtered_facts = filtered_facts[filtered_facts["month"] <= end_month]
+        filtered_wholesale = filtered_wholesale[filtered_wholesale["month"] <= end_month]
+    return filtered_facts, filtered_wholesale
 
 
 def _dataframe_records(df: pd.DataFrame) -> list[dict[str, Any]]:
