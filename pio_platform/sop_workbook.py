@@ -60,8 +60,8 @@ def _build_executive_summary(
     sheet = workbook.create_sheet("Executive_Summary")
     _title_block(
         sheet,
-        "PIO FORECAST – EXECUTIVE SUMMARY",
-        "Standardized Brand → Model → PLC forecast with exact-part planning detail",
+        "PIO FORECAST - EXECUTIVE SUMMARY",
+        "Standardized Brand -> Model -> PLC forecast with exact-part planning detail",
         end_column=10,
     )
     metadata = [
@@ -70,6 +70,10 @@ def _build_executive_summary(
         ("Completed training through", revenue["summary"].get("latestCompleteMonth")),
         ("Forecast periods", ", ".join(revenue["summary"].get("forecastMonths", []))),
         ("Brand definition", revenue["summary"].get("brandDefinition")),
+        (
+            "Dealer-wholesale mapping coverage",
+            f"{float(revenue['summary'].get('anchorPolicy', {}).get('dealerWholesaleQuantityCoveragePct', 0.0)):.1f}%",
+        ),
     ]
     row = 5
     for label, value in metadata:
@@ -125,7 +129,7 @@ def _build_executive_summary(
     _format_table_block(sheet, kpi_row, kpi_row + len(metrics), 1, len(headers))
 
     top_row = 18
-    sheet.cell(top_row, 1, "TOP 10 PLC – REVENUE FORECAST")
+    sheet.cell(top_row, 1, "TOP 10 PLC - REVENUE FORECAST")
     sheet.merge_cells(start_row=top_row, start_column=1, end_row=top_row, end_column=8)
     _section_header(sheet, top_row, 1, 8)
     top_headers = ["Rank", "PLC", "Historical Revenue Share", *revenue["summary"].get("forecastMonths", [])]
@@ -154,7 +158,7 @@ def _build_executive_summary(
     sheet.cell(
         note_row + 1,
         1,
-        "Brand forecasts are official. Model, PLC, and PIS_PNO values are allocated signals that reconcile to the official parent in every month.",
+        "HMA, GMA, and KUS forecasts are official anchors. Model, PLC, and PIS_PNO values are governed allocations; excluded low-volume/lifecycle volume is never hidden and any remainder is labeled for planner review.",
     )
     sheet.merge_cells(start_row=note_row + 1, start_column=1, end_row=note_row + 2, end_column=10)
     sheet.cell(note_row + 1, 1).alignment = Alignment(wrap_text=True, vertical="top")
@@ -178,7 +182,7 @@ def _build_forecast_sheet(
         sheet,
         f"{label.upper()} FORECAST",
         payload["summary"].get("periodExplanation", ""),
-        end_column=14,
+        end_column=15,
     )
     headers = [
         "Forecast Month",
@@ -195,6 +199,7 @@ def _build_forecast_sheet(
         "Method",
         "Expected Unit Revenue",
         "Brand-Anchor WAPE",
+        "Allocation Route",
     ]
     header_row = 5
     for column, value in enumerate(headers, start=1):
@@ -224,6 +229,7 @@ def _build_forecast_sheet(
                 record.get("selectedModel"),
                 record.get("expectedUnitRevenue"),
                 record.get("wape"),
+                record.get("allocationRoute") or "official_anchor",
             ]
             for column, value in enumerate(values, start=1):
                 sheet.cell(row, column, value)
@@ -244,11 +250,11 @@ def _build_forecast_sheet(
         sheet,
         {
             "A": 16, "B": 14, "C": 12, "D": 12, "E": 24, "F": 22, "G": 24,
-            "H": 18, "I": 18, "J": 16, "K": 20, "L": 25, "M": 20, "N": 18,
+            "H": 18, "I": 18, "J": 16, "K": 20, "L": 25, "M": 20, "N": 18, "O": 24,
         },
     )
     sheet.freeze_panes = "A6"
-    sheet.auto_filter.ref = f"A{header_row}:N{max(header_row, row - 1)}"
+    sheet.auto_filter.ref = f"A{header_row}:O{max(header_row, row - 1)}"
     sheet.sheet_view.showGridLines = False
 
 
@@ -261,8 +267,8 @@ def _build_part_planning(
     _title_block(
         sheet,
         "PIS_PNO PART PLANNING",
-        "Exact-part quantity and revenue allocated from reconciled Model × PLC forecasts",
-        end_column=15,
+        "Exact-part quantity and revenue allocated from reconciled Model x PLC forecasts",
+        end_column=16,
     )
     headers = [
         "Forecast Month",
@@ -279,7 +285,8 @@ def _build_part_planning(
         "Quantity Allocation Share",
         "Revenue Allocation Share",
         "Allocation Basis Month",
-        "Reference Revenue (Qty × Unit Revenue)",
+        "Reference Revenue (Qty x Unit Revenue)",
+        "Allocation Route",
     ]
     header_row = 5
     for column, value in enumerate(headers, start=1):
@@ -307,6 +314,7 @@ def _build_part_planning(
             revenue.get("allocationShare"),
             quantity.get("allocationBasisMonth"),
             None,
+            quantity.get("allocationRoute") or revenue.get("allocationRoute"),
         ]
         for column, value in enumerate(values, start=1):
             sheet.cell(row, column, value)
@@ -329,10 +337,11 @@ def _build_part_planning(
         {
             "A": 16, "B": 14, "C": 12, "D": 24, "E": 22, "F": 24, "G": 20, "H": 28,
             "I": 18, "J": 18, "K": 20, "L": 20, "M": 20, "N": 20, "O": 18,
+            "P": 24,
         },
     )
     sheet.freeze_panes = "A6"
-    sheet.auto_filter.ref = f"A{header_row}:O{max(header_row, row - 1)}"
+    sheet.auto_filter.ref = f"A{header_row}:P{max(header_row, row - 1)}"
     sheet.sheet_view.showGridLines = False
 
 
@@ -422,9 +431,9 @@ def _build_qa_assumptions(
     for column, value in enumerate(headers, start=1):
         sheet.cell(header_row, column, value)
     checks = [
-        ("Revenue: Brand → Model → PLC", revenue["summary"]["reconciliation"]),
-        ("Quantity: Brand → Model → PLC", quantity["summary"]["reconciliation"]),
-        ("Wholesale: Brand → Model", wholesale["summary"]["reconciliation"]),
+        ("Revenue: Brand -> Model -> PLC", revenue["summary"]["reconciliation"]),
+        ("Quantity: Brand -> Model -> PLC", quantity["summary"]["reconciliation"]),
+        ("Wholesale: Brand -> Model", wholesale["summary"]["reconciliation"]),
     ]
     for offset, (label, check) in enumerate(checks, start=1):
         row = header_row + offset
@@ -462,10 +471,18 @@ def _build_qa_assumptions(
     _section_header(sheet, source_row, 1, 6)
     source_items = [
         ("Source workbook", source_filename),
-        ("Brand policy", "H = Hyundai / Genesis combined; K = Kia. No inferred HMA/GMA company split."),
+        ("Brand policy", revenue["summary"].get("brandDefinition")),
+        (
+            "Wholesale denominator policy",
+            "HMA, GMA, and KUS use dealer/non-fleet wholesale under the current business rule. Fleet is not added to PIO.",
+        ),
+        (
+            "Lifecycle policy",
+            "Stopped series = 0; low volume = excluded; new/reintroduced = recent run-rate proxy; residuals require planner review.",
+        ),
         ("Accessory policy", "PLC is the governed forecast accessory; PIS_PNO is planning detail."),
         ("Revenue policy", "Brand is official; Model, PLC, and PIS_PNO are reconciled allocations."),
-        ("Part reference formula", "Reference Revenue = PIS_PNO quantity forecast × recent exact-part unit revenue; the reconciled Revenue Forecast remains official."),
+        ("Part reference formula", "Reference Revenue = PIS_PNO quantity forecast x recent exact-part unit revenue; the reconciled Revenue Forecast remains official."),
         ("Primary horizon", ", ".join(revenue["summary"].get("forecastMonths", []))),
     ]
     for offset, (label, value) in enumerate(source_items, start=1):

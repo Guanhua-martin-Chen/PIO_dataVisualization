@@ -94,6 +94,7 @@ def build_model_lifecycle(
     model_code_col: str | None = None,
     cutoff_year: int = 2024,
     reintroduction_gap_months: int = 12,
+    new_model_months: int = 18,
 ) -> dict[str, Any]:
     if not model_col or model_col not in df.columns:
         return _empty_lifecycle(cutoff_year)
@@ -141,15 +142,26 @@ def build_model_lifecycle(
         discontinued = bool(last_month <= cutoff and data_end > cutoff)
         reintroduced = reintroduced_month is not None
         inactive_months = max(0, data_end.ordinal - last_month.ordinal)
+        observed_history_months = max(1, data_end.ordinal - first_month.ordinal + 1)
+        stopped_before_current_year = bool(
+            data_end.month >= 6
+            and last_month.year < data_end.year
+        )
         if discontinued:
             status_code = "discontinued"
             status = f"Discontinued through {cutoff_year}"
+        elif stopped_before_current_year:
+            status_code = "inactive"
+            status = "Inactive before current forecast year"
         elif reintroduced:
             status_code = "reintroduced"
             status = "Reintroduced"
         elif inactive_months >= reintroduction_gap_months:
             status_code = "inactive"
             status = "Inactive"
+        elif observed_history_months < new_model_months:
+            status_code = "new"
+            status = "New / limited history"
         else:
             status_code = "active"
             status = "Active"
@@ -159,10 +171,20 @@ def build_model_lifecycle(
         codes = sorted({value for value in group["modelCode"] if value})
         if discontinued:
             evidence = f"Last positive PIO month was {last_month}; no later positive activity exists through {data_end}."
+        elif stopped_before_current_year:
+            evidence = (
+                f"Last positive PIO month was {last_month}; no positive activity exists in "
+                f"{data_end.year} through {data_end}, so the series is excluded from the current-year forecast."
+            )
         elif reintroduced_month is not None:
             evidence = f"Positive PIO activity resumed in {reintroduced_month} after {max_gap} inactive month(s)."
         elif status_code == "inactive":
             evidence = f"Last positive PIO month was {last_month}; the model has {inactive_months} inactive month(s) through {data_end}."
+        elif status_code == "new":
+            evidence = (
+                f"Positive PIO history begins in {first_month}; only {observed_history_months} month(s) "
+                f"are observable through {data_end}, below the {new_model_months}-month regular-model threshold."
+            )
         else:
             evidence = f"Positive PIO activity continues through {last_month}."
 
@@ -177,15 +199,17 @@ def build_model_lifecycle(
                 "status": status,
                 "statusCode": status_code,
                 "discontinuedThroughCutoff": discontinued,
+                "inactiveBeforeCurrentYear": stopped_before_current_year,
                 "reintroduced": reintroduced,
                 "reintroducedMonth": str(reintroduced_month) if reintroduced_month is not None else None,
                 "longestInactiveGapMonths": int(max_gap),
                 "inactiveMonthsAtDataEnd": int(inactive_months),
+                "observedHistoryMonths": int(observed_history_months),
                 "evidence": evidence,
             }
         )
 
-    status_order = {"discontinued": 0, "reintroduced": 1, "inactive": 2, "active": 3}
+    status_order = {"discontinued": 0, "inactive": 1, "reintroduced": 2, "new": 3, "active": 4}
     records.sort(key=lambda item: (status_order[item["statusCode"]], item["modelName"]))
     return {
         "cutoffYear": cutoff_year,
@@ -194,6 +218,7 @@ def build_model_lifecycle(
         "discontinuedCount": sum(1 for item in records if item["discontinuedThroughCutoff"]),
         "reintroducedCount": sum(1 for item in records if item["reintroduced"]),
         "inactiveCount": sum(1 for item in records if item["statusCode"] == "inactive"),
+        "newCount": sum(1 for item in records if item["statusCode"] == "new"),
         "records": records,
     }
 
@@ -206,5 +231,6 @@ def _empty_lifecycle(cutoff_year: int) -> dict[str, Any]:
         "discontinuedCount": 0,
         "reintroducedCount": 0,
         "inactiveCount": 0,
+        "newCount": 0,
         "records": [],
     }

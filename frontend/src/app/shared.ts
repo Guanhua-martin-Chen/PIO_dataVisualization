@@ -117,6 +117,29 @@ export type EdaDashboardPayload = {
       evidence: string;
     }>;
   };
+  sourceAnchorAudit: {
+    latestMonth: string | null;
+    summary: Array<{
+      sourceCode: string;
+      anchorBrand: string;
+      pioQuantity: number;
+      pioRevenue: number;
+    }>;
+    sourceHModels: Array<{
+      sourceCode: "H";
+      anchorBrand: string;
+      modelName: string;
+      mappingMethod: string;
+      modelYears: string[];
+      salesYears: string[];
+      firstSaleDate: string;
+      lastSaleDate: string;
+      latestMonth: string;
+      latestMonthQuantity: number;
+      totalQuantity: number;
+      totalRevenue: number;
+    }>;
+  };
 };
 
 export type WorkspacePayload = {
@@ -204,11 +227,13 @@ export type MonthlyFactsPayload = {
     minMonth: string | null;
     maxMonth: string | null;
     brandCount: number;
+    anchorCount: number;
     modelCount: number;
     plcCount: number;
     partCount: number;
     totalQuantity: number;
     totalRevenue: number;
+    dealerWholesaleExactQuantityCoveragePct: number;
     wholesaleCoveragePct: number;
     workingDaysCoveragePct: number;
     grain: string;
@@ -217,6 +242,8 @@ export type MonthlyFactsPayload = {
   rows: Array<{
     month: string;
     brand: string;
+    anchorBrand: string;
+    anchorMappingMethod: string;
     entityKey: string;
     modelName: string;
     modelCode: string;
@@ -224,9 +251,12 @@ export type MonthlyFactsPayload = {
     partNumber: string;
     partDescription: string;
     lifecycleStatus: string;
+    lifecycleStatusCode: string;
     installationQuantity: number;
     pioRevenue: number;
     wholesaleUnits: number | null;
+    accessoryUnitsPerVehicle: number | null;
+    revenuePerVehicle: number | null;
     pnvw: number | null;
     workingDays: number | null;
     quantityPerWorkingDay: number | null;
@@ -325,6 +355,30 @@ export type ForecastCenterPayload = {
     accuracyPct: number | null;
     modelCounts: Record<string, number>;
     brandDefinition: string;
+    anchorPolicy: {
+      officialAnchors: string[];
+      sharedCutoff: string | null;
+      dealerWholesaleQuantityCoveragePct: number;
+      fallbackQuantitySharePct: number;
+      mappingMethods: Record<string, number>;
+      denominatorPolicy: Record<string, string>;
+      fleetPolicy: string;
+      negativeSentinelPolicy: string;
+      modelVariantPolicy: string;
+    };
+    allocationRouting: {
+      model: Record<string, number>;
+      plc: Record<string, number>;
+      excludedModelSeries: number;
+      excludedPlcSeries: number;
+      newModelProxySeries: number;
+      plannerReviewResiduals: number;
+    };
+    businessValidation: Array<{
+      check: string;
+      status: "PASS" | "WARN" | "FAIL";
+      detail: string;
+    }>;
     reconciliation: {
       status: "PASS" | "FAIL";
       brandToModelMaxAbsDelta: number;
@@ -336,9 +390,17 @@ export type ForecastCenterPayload = {
       seasonality?: boolean;
       tariffImpactPct?: number;
       modelStrategy?: string;
+      minMonthlyVolume?: number;
     };
     formulaCatalog: Array<{ name: string; formula: string; logic: string }>;
     accuracyDefinition: string | null;
+    accuracyScope: {
+      target: string;
+      evaluatedGrain: string;
+      overallFormula: string;
+      anchorFormula: string;
+      childPolicy: string;
+    };
   };
   records: ForecastCenterRecord[];
   topAccessories: ForecastCenterRecord[];
@@ -356,6 +418,13 @@ export type ForecastCenterRecord = {
   entityKey?: string;
   plc?: string;
   lifecycleStatus?: string;
+  lifecycleStatusCode?: string;
+  allocationRoute?: string;
+  forecastEligible?: boolean;
+  activeMonths?: number;
+  historyMonths?: number;
+  backtestPoints?: number;
+  monthlyAverage?: number;
   historyVolume?: number;
   historyQuantity?: number;
   historyRevenue?: number;
@@ -373,6 +442,8 @@ export type ForecastCenterRecord = {
     actualToDate?: number | null;
     workingDays?: number | null;
     estimatedElapsedWorkingDays?: number | null;
+    calendarWeekdaysElapsed?: number;
+    calendarWeekdaysInMonth?: number;
     completionRatio?: number;
     statisticalBaseline?: number;
     allocationShare?: number;
