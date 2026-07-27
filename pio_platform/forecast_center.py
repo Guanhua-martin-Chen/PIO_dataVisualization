@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from pio_platform.hierarchical_forecasting import build_hierarchical_forecast
+from pio_platform.ets_experiments import VALIDATED_REFERENCE_PORTFOLIO
 from pio_platform.fact_table import OFFICIAL_ANCHORS, normalize_anchor_brand
 from pio_platform.model_entities import build_model_lifecycle, normalize_model_name
 
@@ -43,6 +44,7 @@ def build_forecast_center(
     latest_sales_month_is_complete: bool = False,
     latest_sales_date: pd.Timestamp | None = None,
     include_all_records: bool = False,
+    source_hash: str = "",
 ) -> dict[str, Any]:
     if metric not in FORECAST_CENTER_METRICS:
         raise ValueError(f"Unsupported Forecast Center metric: {metric}")
@@ -52,6 +54,8 @@ def build_forecast_center(
         raise ValueError("Wholesale Quantity is available at Brand and Model levels only.")
     if horizon < 1 or horizon > 12:
         raise ValueError("Forecast horizon must be between 1 and 12 months.")
+    if model_strategy == "reference_portfolio" and metric != "revenue":
+        raise ValueError("reference_portfolio is available only for Revenue.")
 
     working_day_map = _working_day_map(working_days)
     if metric == "wholesale_quantity":
@@ -90,11 +94,16 @@ def build_forecast_center(
         working_days,
         level="brand",
         horizon=horizon,
-        use_working_days=use_working_days,
-        use_seasonality=use_seasonality,
+        use_working_days=(
+            True if model_strategy == "reference_portfolio" else use_working_days
+        ),
+        use_seasonality=(
+            True if model_strategy == "reference_portfolio" else use_seasonality
+        ),
         tariff_impact_pct=tariff_impact_pct if metric != "wholesale_quantity" else 0.0,
         min_monthly_volume=0.0,
         model_strategy=model_strategy,
+        target_metric=metric,
         limit=len(OFFICIAL_ANCHORS),
         latest_month_is_complete=latest_month_complete,
         check_latest_volume=check_latest_volume,
@@ -106,6 +115,20 @@ def build_forecast_center(
         latest_source_date=latest_source_date,
         working_day_map=working_day_map,
     )
+    validation_applies = (
+        model_strategy == "reference_portfolio"
+        and source_hash.lower() == VALIDATED_REFERENCE_PORTFOLIO["sourceHash"]
+    )
+    if validation_applies:
+        for record in brand_records:
+            brand_metric = VALIDATED_REFERENCE_PORTFOLIO["brandMetrics"].get(
+                str(record.get("brand", ""))
+            )
+            if brand_metric:
+                record["wape"] = brand_metric["wape"]
+                record["accuracyPct"] = round(brand_metric["accuracy"] * 100.0, 2)
+                record["backtestPoints"] = VALIDATED_REFERENCE_PORTFOLIO["foldCount"]
+                record["backtestModel"] = record.get("selectedModel", "")
     latest_complete_month = anchor["summary"].get("latestCompleteMonth")
     if not latest_complete_month:
         return _empty_payload(metric, level, horizon, top_n)
@@ -203,8 +226,16 @@ def build_forecast_center(
             latest_source_date,
             working_day_map,
         ),
-        "weightedWape": anchor["summary"].get("weightedWape"),
-        "accuracyPct": anchor["summary"].get("accuracyPct"),
+        "weightedWape": (
+            VALIDATED_REFERENCE_PORTFOLIO["officialTotal"]["wape"]
+            if validation_applies
+            else anchor["summary"].get("weightedWape")
+        ),
+        "accuracyPct": (
+            round(VALIDATED_REFERENCE_PORTFOLIO["officialTotal"]["accuracy"] * 100.0, 2)
+            if validation_applies
+            else anchor["summary"].get("accuracyPct")
+        ),
         "modelCounts": dict(model_counts),
         "brandDefinition": (
             "Official anchors are HMA, GMA, and KUS. HMA/GMA are assigned by exact dealer-wholesale "
@@ -231,6 +262,13 @@ def build_forecast_center(
         "formulaCatalog": _formula_catalog(metric),
         "accuracyDefinition": anchor["summary"].get("accuracyDefinition"),
         "accuracyScope": _accuracy_scope(metric),
+        "modelGovernance": _model_governance(
+            model_strategy=model_strategy,
+            source_hash=source_hash,
+            latest_complete_month=latest_complete_month,
+            brand_records=brand_records,
+            validation_applies=validation_applies,
+        ),
     }
     payload: dict[str, Any] = {
         "summary": summary,
@@ -242,6 +280,55 @@ def build_forecast_center(
         payload["modelRecords"] = model_records
         payload["modelPlcRecords"] = plc_records
     return payload
+
+
+def _model_governance(
+    *,
+    model_strategy: str,
+    source_hash: str,
+    latest_complete_month: str,
+    brand_records: list[dict[str, Any]],
+    validation_applies: bool,
+) -> dict[str, Any]:
+    if model_strategy == "reference_portfolio":
+        status = (
+            VALIDATED_REFERENCE_PORTFOLIO["implementationStatus"]
+            if validation_applies
+            else "validated_implementation_applied_to_unvalidated_source"
+        )
+        return {
+            "requestedStrategy": model_strategy,
+            "sourceHash": source_hash or "unavailable",
+            "trainingCutoff": latest_complete_month,
+            "backtestHorizons": VALIDATED_REFERENCE_PORTFOLIO["backtestHorizons"],
+            "foldCount": (
+                VALIDATED_REFERENCE_PORTFOLIO["foldCount"] if validation_applies else None
+            ),
+            "wapeScope": VALIDATED_REFERENCE_PORTFOLIO["wapeScope"],
+            "accuracyProxy": (
+                VALIDATED_REFERENCE_PORTFOLIO["officialTotal"]["accuracy"]
+                if validation_applies
+                else None
+            ),
+            "referenceMethodStatus": status,
+            "contractVersion": VALIDATED_REFERENCE_PORTFOLIO["contractVersion"],
+            "brandSpecificMethods": VALIDATED_REFERENCE_PORTFOLIO["brandMethods"],
+        }
+    return {
+        "requestedStrategy": model_strategy,
+        "sourceHash": source_hash or "unavailable",
+        "trainingCutoff": latest_complete_month,
+        "backtestHorizons": [1],
+        "foldCount": sum(int(record.get("backtestPoints", 0)) for record in brand_records),
+        "wapeScope": "application outer holdout across selected Brand anchors",
+        "accuracyProxy": None,
+        "referenceMethodStatus": "not_reference_portfolio",
+        "contractVersion": None,
+        "brandSpecificMethods": {
+            str(record.get("brand", "")): str(record.get("selectedModel", ""))
+            for record in brand_records
+        },
+    }
 
 
 def build_part_planning_records(
@@ -1355,7 +1442,7 @@ def _accuracy_scope(metric: str) -> dict[str, str]:
     metric_label = METRIC_LABELS.get(metric, metric)
     return {
         "target": metric_label,
-        "evaluatedGrain": "month x selected official brand anchor(s) from HMA/GMA/KUS",
+        "evaluatedGrain": "month × selected official brand anchor(s) from HMA/GMA/KUS",
         "overallFormula": (
             "Overall Accuracy = max(0, 1 - SUM(absolute backtest error across selected governed anchors) "
             "/ SUM(actual across selected governed anchors)). It is volume-weighted, not a simple average of anchor percentages."
@@ -1429,6 +1516,18 @@ def _empty_payload(metric: str, level: str, horizon: int, top_n: int) -> dict[st
             "formulaCatalog": _formula_catalog(metric),
             "accuracyDefinition": None,
             "accuracyScope": _accuracy_scope(metric),
+            "modelGovernance": {
+                "requestedStrategy": "auto",
+                "sourceHash": "unavailable",
+                "trainingCutoff": "",
+                "backtestHorizons": [1],
+                "foldCount": 0,
+                "wapeScope": "no eligible Brand anchors",
+                "accuracyProxy": None,
+                "referenceMethodStatus": "not_reference_portfolio",
+                "contractVersion": None,
+                "brandSpecificMethods": {},
+            },
         },
         "records": [],
         "topAccessories": [],

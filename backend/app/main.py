@@ -598,6 +598,7 @@ def get_forecast_center(
             top_n=top_n,
             latest_sales_month_is_complete=latest_month_is_complete,
             latest_sales_date=latest_sales_date,
+            source_hash=_workbook_sha256(session.file_bytes),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -654,6 +655,7 @@ def export_forecast_center_csv(
         min_monthly_volume=min_monthly_volume,
         latest_sales_month_is_complete=latest_month_is_complete,
         latest_sales_date=latest_sales_date,
+        source_hash=_workbook_sha256(session.file_bytes),
     )
     rows: list[dict[str, Any]] = []
     for record in payload["records"]:
@@ -724,14 +726,19 @@ def export_forecast_center_xlsx(
         metric="revenue",
         level="brand",
         **common,
+        source_hash=_workbook_sha256(session.file_bytes),
     )
+    non_revenue_common = dict(common)
+    if model_strategy == "reference_portfolio":
+        non_revenue_common["model_strategy"] = "auto"
     quantity = build_forecast_center(
         facts,
         working_days,
         wholesale_long,
         metric="quantity",
         level="brand",
-        **common,
+        **non_revenue_common,
+        source_hash=_workbook_sha256(session.file_bytes),
     )
     wholesale = build_forecast_center(
         facts,
@@ -739,7 +746,8 @@ def export_forecast_center_xlsx(
         wholesale_long,
         metric="wholesale_quantity",
         level="brand",
-        **common,
+        **non_revenue_common,
+        source_hash=_workbook_sha256(session.file_bytes),
     )
     part_quantity = build_part_planning_records(
         facts,

@@ -401,6 +401,18 @@ export type ForecastCenterPayload = {
       anchorFormula: string;
       childPolicy: string;
     };
+    modelGovernance: {
+      requestedStrategy: string;
+      sourceHash: string;
+      trainingCutoff: string;
+      backtestHorizons: number[];
+      foldCount: number | null;
+      wapeScope: string;
+      accuracyProxy: number | null;
+      referenceMethodStatus: string;
+      contractVersion: string | null;
+      brandSpecificMethods: Record<string, string>;
+    };
   };
   records: ForecastCenterRecord[];
   topAccessories: ForecastCenterRecord[];
@@ -431,6 +443,9 @@ export type ForecastCenterRecord = {
   historyRevenueSharePct?: number;
   expectedUnitRevenue?: number | null;
   selectedModel: string;
+  brandSpecificMethod?: string;
+  requestedModelStrategy?: string;
+  backtestModel?: string;
   selectionNote?: string;
   wape?: number | null;
   accuracyPct?: number | null;

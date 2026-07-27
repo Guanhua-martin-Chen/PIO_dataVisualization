@@ -129,6 +129,9 @@ export default function ForecastCenterPanel({
               options={[
                 { label: "Auto: baselines + drivers", value: "auto" },
                 { label: "Auto: statistical baselines only", value: "baseline_auto" },
+                ...(metric === "revenue"
+                  ? [{ label: "Validated reference portfolio", value: "reference_portfolio" }]
+                  : []),
                 { label: "Driver regression (OLS)", value: "driver_adjusted_regression" },
                 { label: "Additive ETS", value: "ets_additive" },
                 { label: "Naive last", value: "naive_last" },
@@ -143,11 +146,13 @@ export default function ForecastCenterPanel({
             />
             <Select
               value={useWorkingDays}
+              disabled={modelStrategy === "reference_portfolio"}
               options={[{ label: "Working Days on", value: true }, { label: "Working Days off", value: false }]}
               onChange={onWorkingDaysChange}
             />
             <Select
               value={useSeasonality}
+              disabled={modelStrategy === "reference_portfolio"}
               options={[{ label: "Seasonality on", value: true }, { label: "Seasonality off", value: false }]}
               onChange={onSeasonalityChange}
             />
@@ -196,6 +201,16 @@ export default function ForecastCenterPanel({
                 <div className="summary-row"><span className="summary-dot" /><span>{data.summary.accuracyScope.overallFormula}</span></div>
                 <div className="summary-row"><span className="summary-dot" /><span>{data.summary.accuracyScope.childPolicy}</span></div>
               </div>
+              <div className="health-grid" style={{ marginTop: 16 }}>
+                <div><span className="health-label">Requested Strategy</span><strong>{data.summary.modelGovernance.requestedStrategy}</strong></div>
+                <div><span className="health-label">Source hash</span><strong>{data.summary.modelGovernance.sourceHash}</strong></div>
+                <div><span className="health-label">Training cutoff</span><strong>{data.summary.modelGovernance.trainingCutoff}</strong></div>
+                <div><span className="health-label">Backtest horizons</span><strong>{data.summary.modelGovernance.backtestHorizons.join(", ")}</strong></div>
+                <div><span className="health-label">Fold count</span><strong>{data.summary.modelGovernance.foldCount ?? "Not validated for this source"}</strong></div>
+                <div><span className="health-label">WAPE scope</span><strong>{data.summary.modelGovernance.wapeScope}</strong></div>
+                <div><span className="health-label">Accuracy proxy</span><strong>{data.summary.modelGovernance.accuracyProxy === null ? "Not validated for this source" : `${(data.summary.modelGovernance.accuracyProxy * 100).toFixed(2)}%`}</strong></div>
+                <div><span className="health-label">Reference status</span><strong>{data.summary.modelGovernance.referenceMethodStatus}</strong></div>
+              </div>
               <Table
                 style={{ marginTop: 16 }}
                 size="small"
@@ -204,7 +219,10 @@ export default function ForecastCenterPanel({
                 dataSource={data.brandRecords}
                 columns={[
                   { title: "Official anchor", dataIndex: "brand", key: "brand" },
+                  { title: "Requested strategy", dataIndex: "requestedModelStrategy", key: "requestedModelStrategy" },
+                  { title: "Brand-specific method", dataIndex: "brandSpecificMethod", key: "brandSpecificMethod" },
                   { title: "Selected model", dataIndex: "selectedModel", key: "selectedModel" },
+                  { title: "Backtest model", dataIndex: "backtestModel", key: "backtestModel" },
                   { title: "History months", dataIndex: "historyMonths", key: "historyMonths", align: "right" as const },
                   { title: "Independent test points", dataIndex: "backtestPoints", key: "backtestPoints", align: "right" as const },
                   {

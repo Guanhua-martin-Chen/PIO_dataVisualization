@@ -962,6 +962,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             ? "model"
             : hierarchyLevel;
           setForecastMetric(nextMetric);
+          if (nextMetric !== "revenue" && hierarchyModelStrategy === "reference_portfolio") {
+            setHierarchyModelStrategy("auto");
+          }
           setHierarchyLevel(nextLevel);
           if (workspace) {
             loadHierarchicalForecast(workspace.sheetName, forecastFilterState, nextLevel, nextMetric);
@@ -973,7 +976,13 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             loadHierarchicalForecast(workspace.sheetName, forecastFilterState, nextLevel, forecastMetric);
           }
         }}
-        onModelStrategyChange={setHierarchyModelStrategy}
+        onModelStrategyChange={(strategy) => {
+          setHierarchyModelStrategy(strategy);
+          if (strategy === "reference_portfolio") {
+            setUseWorkingDays(true);
+            setUseSeasonality(true);
+          }
+        }}
         onWorkingDaysChange={setUseWorkingDays}
         onSeasonalityChange={setUseSeasonality}
         onTariffImpactChange={setTariffImpactPct}

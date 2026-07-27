@@ -87,6 +87,7 @@ V1 覆盖从 Excel 导入、可信 EDA 到分层预测和企业导出的完整�
 
 ### 🧮 模型、Working Days 与准确率
 - `Auto` 会让合格的统计 baseline 与 OLS driver regression 比较独立验证 WAPE；`Baseline auto` 只比较统计 baseline；也可强制选择某个合格模型
+- Revenue 另提供已验证的 `reference_portfolio`：HMA 使用优化 Holt-Winters、GMA 使用 Last-Month Revenue、KUS 使用 Working-Day-Adjusted Seasonal；它只适用于 Revenue Brand anchor，当前仍保留 `Auto` 为默认
 - 候选模型包括 naive、mean、weighted moving average、trailing-12 mean、trend、seasonal naive/mean、additive ETS、Croston SBA；ETS 至少需要 24 个月，季节模型与 OLS 至少需要 18 个月
 - Working Days 是工作簿给出的**整月业务工作日暴露量**，不是日期号或自然日数；OLS 将其作为标准化特征，其他 baseline/层级分配使用工作日比例调整
 - 2026-07 显示为截至 7 月 22 日的 MTD actual 加剩余月份预测所组成的 full-month nowcast；2026-08 起才是纯 forecast
@@ -314,6 +315,7 @@ The platform has been tested against the current reference workbook's **478,125 
 
 ### 🧮 Models, Working Days, and Accuracy
 - `Auto` compares eligible statistical baselines with OLS driver regression on validation WAPE; `Baseline auto` restricts selection to statistical baselines; an eligible model may also be forced
+- Revenue also exposes a validated `reference_portfolio`: optimized Holt-Winters for HMA, Last-Month Revenue for GMA, and Working-Day-Adjusted Seasonal for KUS. It is limited to Revenue Brand anchors, while `Auto` remains the default
 - Candidates include naive, mean, weighted moving average, trailing-12 mean, trend, seasonal naive/mean, additive ETS, and Croston SBA. ETS needs at least 24 months; seasonal models and OLS need at least 18 months
 - Working Days is the workbook's **full-month business-day exposure**, not the calendar day number. OLS learns it as a standardized feature; other baselines and allocations use working-day ratio adjustments
 - July 2026 is a full-month nowcast composed of MTD actual through July 22 plus an estimate for the remaining month. Pure forecast begins in August 2026

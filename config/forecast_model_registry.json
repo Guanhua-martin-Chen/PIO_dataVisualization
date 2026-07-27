@@ -1,0 +1,368 @@
+{
+  "schemaVersion": "1.0.0",
+  "contractVersion": "pio-backtest-v1",
+  "asOf": "2026-07-27",
+  "purpose": "Machine-readable inventory of production, reference, challenger, and diagnostic forecasting methods.",
+  "sources": {
+    "current": {
+      "path": "C:\\Users\\Lenovo\\Desktop\\PIO\\CapStone_Sales_Data_0722+PLC.xlsx",
+      "sha256": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
+      "pioRows": 478125,
+      "actualThrough": "2026-07-22",
+      "completedTrainingThrough": "2026-06-30"
+    },
+    "reference": {
+      "path": "C:\\Users\\Lenovo\\Desktop\\PIO\\PIO_Forecast_Output_20260715_v2.xlsx",
+      "declaredInput": "data/raw/CapStone_Sales_Data_0716.xlsx",
+      "declaredInputSha256": "cec39f4f681f084b07f0fcc4503bf2293184eb211a58083002a599c9d882f19a",
+      "pioRows": 475178,
+      "actualThrough": "2026-07-15",
+      "completedTrainingThrough": "2026-06-30",
+      "reproductionStatus": "formula_specification_recovered_source_snapshot_missing"
+    }
+  },
+  "evaluationContract": {
+    "foldType": "expanding_rolling_origin",
+    "minimumTrainingMonths": 24,
+    "horizons": [1, 2, 3],
+    "expectedFoldsFor42CompletedMonths": {
+      "1": 18,
+      "2": 17,
+      "3": 16,
+      "combined": 51
+    },
+    "primaryMetric": "wape",
+    "accuracyProxy": "max(0, 1 - wape)",
+    "secondaryMetrics": [
+      "mae",
+      "signed_bias",
+      "bias_percentage",
+      "fold_wape_standard_deviation",
+      "prediction_coverage",
+      "fold_count"
+    ],
+    "officialPortfolioAggregation": "sum HMA/GMA/KUS predictions and actuals on common origin-horizon rows before calculating errors",
+    "selectionRule": "minimum WAPE; within 0.01 absolute WAPE prefer lower absolute bias, then lower fold-WAPE standard deviation, then lower complexity",
+    "partialMonthPolicy": "exclude current partial month from pre-month model training and evaluate cutoff nowcast separately"
+  },
+  "latestUnifiedRun": {
+    "generatedFrom": "CapStone_Sales_Data_0722+PLC.xlsx",
+    "sourceSha256": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
+    "completedTrainingThrough": "2026-06",
+    "resultPath": "outputs/backtests/unified_backtest_f44048f30632_pio-backtest-v1.json",
+    "commonFoldCount": 51,
+    "officialTotalResults": {
+      "referenceRevenueProxy": {
+        "wape": 0.09793953779347239,
+        "accuracy": 0.9020604622065276,
+        "biasPercentage": 0.021047949739834062
+      },
+      "currentAutoRevenue": {
+        "wape": 0.10281284376206735,
+        "accuracy": 0.8971871562379327,
+        "biasPercentage": 0.01299090073140952
+      },
+      "legacyRevenueFrozen": {
+        "wape": 0.09346574894088648,
+        "accuracy": 0.9065342510591136,
+        "biasPercentage": -0.006477732585778523
+      },
+      "rebuiltReferencePortfolio": {
+        "wape": 0.06893887801948267,
+        "accuracy": 0.9310611219805174,
+        "biasPercentage": 0.010737313740393228,
+        "foldWapeStandardDeviation": 0.056316697141294746,
+        "coverage": 1.0,
+        "horizonWape": {
+          "1": 0.05834151991990784,
+          "2": 0.0654852799007802,
+          "3": 0.08447608480965917
+        }
+      },
+      "currentAutoQuantityByBrand": {
+        "wape": 0.09912171000967238,
+        "accuracy": 0.9008782899903276,
+        "biasPercentage": 0.026773359393689182
+      },
+      "referenceQuantityTotalEtsProxy": {
+        "wape": 0.08976328552451446,
+        "accuracy": 0.9102367144754855,
+        "biasPercentage": 0.012065385700036922
+      },
+      "currentAutoWholesale": {
+        "wape": 0.05594073125982667,
+        "accuracy": 0.9440592687401733,
+        "biasPercentage": 0.00137438514685685
+      }
+    },
+    "interpretation": "On the current 7/22 source and one common contract, the rebuilt reference Revenue portfolio is the validated champion at 6.8939% official-total WAPE. It uses the validated HMA Holt-Winters candidate, GMA naive_last, and KUS working_day_adjusted_seasonal. Auto remains the website default pending explicit user approval."
+  },
+  "latestHmaEtsExperiment": {
+    "sourceSha256": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
+    "contractVersion": "pio-backtest-v1",
+    "candidateCount": 1082,
+    "fullCoverageCandidateCount": 1082,
+    "selectedCandidate": "hw_add_add__heuristic__bias_on__log1p__rolling_24__robust_winsorized",
+    "selectedCandidateWape": 0.09892838286573653,
+    "selectedCandidateHorizonWape": {
+      "1": 0.08903266085772042,
+      "2": 0.09272478718108146,
+      "3": 0.11670985377503826
+    },
+    "empiricalBestCandidate": "hw_add_add__legacy_heuristic__bias_off__raw__rolling_36__anomaly_softened",
+    "empiricalBestWape": 0.0958566965050282,
+    "repositoryEtsWape": 0.13521028422857925,
+    "legacyDampedTrendWape": 0.12480208622485083,
+    "selectionRule": "Candidates within 0.01 WAPE of the empirical best use lower absolute bias, then lower fold-WAPE standard deviation, then coverage, then complexity.",
+    "repeatability": "Exact metrics and 153 portfolio predictions reproduced with zero absolute difference."
+  },
+  "statusVocabulary": {
+    "implemented": "Runnable in the current application or unified harness.",
+    "specification_only": "Recovered from reference evidence but exact implementation/source is unavailable.",
+    "challenger": "May be evaluated but cannot be promoted without common-contract evidence.",
+    "diagnostic_only": "Used for analysis or reconstruction, not an official statistical anchor.",
+    "blocked": "Cannot be reproduced exactly until identified evidence is supplied."
+  },
+  "models": [
+    {
+      "id": "current_auto_brand_anchor",
+      "status": "implemented",
+      "target": "pio_revenue",
+      "level": "brand",
+      "anchors": ["HMA", "GMA", "KUS"],
+      "implementation": "pio_platform.forecasting.select_best_model + forecast_history",
+      "description": "Selects among current statistical baselines independently inside each outer fold.",
+      "reportedEvidence": {
+        "scope": "current application outer holdout; not yet rerun on the unified 24-month H1-H3 contract",
+        "overallAccuracy": 0.8303,
+        "HMA": 0.7910,
+        "GMA": 0.8713,
+        "KUS": 0.8969
+      }
+    },
+    {
+      "id": "reference_revenue_portfolio_v2",
+      "status": "specification_only",
+      "target": "pio_revenue",
+      "level": "official_total_from_brand_anchors",
+      "brandModels": {
+        "HMA": "ets",
+        "GMA": "naive_last",
+        "KUS": "working_day_adjusted_seasonal"
+      },
+      "reportedEvidence": {
+        "combinedH1toH3Wape": 0.0825652056352036,
+        "combinedAccuracy": 0.9174347943647964,
+        "horizonWape": {
+          "1": 0.077497370340324,
+          "2": 0.0770738884354881,
+          "3": 0.0940795126492149
+        },
+        "brandSelectedWape": {
+          "HMA": 0.1069253171693039,
+          "GMA": 0.1476762011872327,
+          "KUS": 0.0962824929955968
+        }
+      },
+      "reproductionNote": "The local current ets_additive implementation is only a proxy for the unrecovered reference ETS fit."
+    },
+    {
+      "id": "rebuilt_reference_portfolio_v1",
+      "status": "implemented",
+      "promotionStatus": "champion",
+      "productionDefault": false,
+      "target": "pio_revenue",
+      "level": "official_total_from_brand_anchors",
+      "implementation": "Forecast Center model_strategy=reference_portfolio",
+      "brandModels": {
+        "HMA": "hw_add_add__heuristic__bias_on__log1p__rolling_24__robust_winsorized",
+        "GMA": "naive_last",
+        "KUS": "working_day_adjusted_seasonal"
+      },
+      "hmaConfiguration": {
+        "trend": "additive",
+        "dampedTrend": false,
+        "seasonality": "additive",
+        "seasonalPeriods": 12,
+        "initializationMethod": "heuristic",
+        "optimized": true,
+        "removeBias": true,
+        "transform": "log1p",
+        "trainingWindow": "rolling_24",
+        "preprocessing": "robust_winsorized"
+      },
+      "reportedEvidence": {
+        "scope": "current 7/22 source, pio-backtest-v1, common H1-H3 folds",
+        "officialTotalWape": 0.06893887801948267,
+        "officialTotalAccuracy": 0.9310611219805174,
+        "officialTotalBiasPercentage": 0.010737313740393228,
+        "officialTotalFoldWapeStandardDeviation": 0.056316697141294746,
+        "predictionCoverage": 1.0,
+        "foldCount": 51,
+        "horizonWape": {
+          "1": 0.05834151991990784,
+          "2": 0.0654852799007802,
+          "3": 0.08447608480965917
+        },
+        "brandWape": {
+          "HMA": 0.09892838286573653,
+          "GMA": 0.1476762011872328,
+          "KUS": 0.09628249299559685
+        }
+      },
+      "guardrails": [
+        "Revenue Brand anchors only",
+        "Auto remains the website default",
+        "same 51 common folds",
+        "reference metrics shown only when source hash matches",
+        "Quantity, Wholesale, reconciliation, allocation, lifecycle, and nowcast logic unchanged"
+      ]
+    },
+    {
+      "id": "legacy_revenue_frozen_brand_models",
+      "status": "implemented",
+      "target": "pio_revenue",
+      "level": "official_total_from_brand_anchors",
+      "brandModels": {
+        "HMA": "damped_trend",
+        "GMA": "log_linear_trend",
+        "KUS": "seasonal_mean"
+      },
+      "reportedEvidence": {
+        "scope": "current 7/22 source, pio-backtest-v1, common H1-H3 folds",
+        "officialTotalWape": 0.09346574894088648,
+        "officialTotalAccuracy": 0.9065342510591136,
+        "foldCount": 51
+      }
+    },
+    {
+      "id": "reference_quantity_total_ets_v2",
+      "status": "specification_only",
+      "target": "pio_quantity",
+      "level": "total",
+      "model": "ets",
+      "allocation": "rolling_6_month_model_mean_then_exact_reconciliation",
+      "reportedEvidence": {
+        "totalAnchorWape": 0.0789008569595492,
+        "totalAnchorAccuracy": 0.9210991430404508,
+        "modelAllocationWape": 0.0880329251182371
+      }
+    },
+    {
+      "id": "current_auto_quantity_brand_anchors",
+      "status": "implemented",
+      "target": "pio_quantity",
+      "level": "brand",
+      "anchors": ["HMA", "GMA", "KUS"],
+      "reportedEvidence": {
+        "scope": "current application outer holdout; not yet rerun on the unified contract",
+        "overallAccuracy": 0.8384,
+        "HMA": 0.7816,
+        "GMA": 0.8898,
+        "KUS": 0.9683
+      }
+    },
+    {
+      "id": "current_wholesale_auto",
+      "status": "implemented",
+      "target": "dealer_non_fleet_wholesale_quantity",
+      "level": "brand_then_model",
+      "anchors": ["HMA", "GMA", "KUS"],
+      "reportedEvidence": {
+        "scope": "current application outer holdout",
+        "overallAccuracy": 0.9309,
+        "HMA": 0.9237,
+        "GMA": 0.9245,
+        "KUS": 0.9380
+      }
+    },
+    {
+      "id": "reference_exact_part_allocation",
+      "status": "diagnostic_only",
+      "target": "pio_quantity",
+      "level": "pis_pno",
+      "method": "previous_month_exact_part_share_with_documented_fallbacks",
+      "reportedEvidence": {
+        "wape": 0.3439490763578046,
+        "accuracy": 0.6560509236421954
+      }
+    },
+    {
+      "id": "reference_expected_unit_revenue",
+      "status": "diagnostic_only",
+      "target": "expected_unit_revenue",
+      "level": "model_x_pis_pno_with_fallbacks",
+      "method": "latest prior realized exact-part unit revenue followed by governed fallback chain",
+      "reportedEvidence": {
+        "wape": 0.3706478076388071,
+        "accuracy": 0.6293521923611929
+      }
+    },
+    {
+      "id": "reference_cutoff_nowcast",
+      "status": "specification_only",
+      "target": "pio_revenue",
+      "level": "official_total",
+      "formula": "(1 - mtd_weight) * premonth_forecast + mtd_weight * mtd_completion_projection",
+      "cutoffWeights": {
+        "5": 0.1,
+        "10": 0.4,
+        "15": 0.6,
+        "20": 0.8,
+        "25": 1.0
+      },
+      "reportedEvidence": {
+        "day5Wape": 0.0821546,
+        "day10Wape": 0.0739196,
+        "day15Wape": 0.05396125,
+        "day20Wape": 0.05901291,
+        "day20Accuracy": 0.94098709,
+        "day25Wape": 0.0291880
+      }
+    },
+    {
+      "id": "ridge_driver_challenger",
+      "status": "challenger",
+      "target": "pio_revenue",
+      "level": "brand_or_global_panel",
+      "allowedFeatures": [
+        "target_lags",
+        "calendar_month",
+        "known_working_days",
+        "lagged_wholesale",
+        "lifecycle",
+        "lagged_mix"
+      ],
+      "reportedReferenceEvidence": {
+        "horizon1Wape": 0.0781495
+      }
+    },
+    {
+      "id": "xgboost_driver_challenger",
+      "status": "challenger",
+      "target": "pio_revenue",
+      "level": "global_panel_preferred",
+      "reportedReferenceEvidence": {
+        "horizon1Wape": 0.0792191,
+        "comparableEtsHorizon1Wape": 0.0708,
+        "promotionDecision": "not_promoted"
+      }
+    }
+  ],
+  "referenceEvidence": {
+    "executiveMethodAndHeadlinePerformance": "Executive_Summary!A27:D48",
+    "candidateFormulasAndSelection": "Model_Performance!A1:J55",
+    "quantityPartNowcastAndHorizonEvidence": "Model_Performance!A56:J151",
+    "definitionsLimitationsAndQa": "QA_Assumptions!A1:D108"
+  },
+  "promotionGates": [
+    "same source hash and cutoff contract",
+    "same outer folds and horizons",
+    "no future-target or oracle-driver leakage",
+    "better WAPE outside the 0.01 tie band or wins documented tie-breaks",
+    "acceptable bias, stability, and coverage",
+    "hierarchy reconciliation passes",
+    "independent allocation accuracy is reported where applicable",
+    "business logic and Executive Summary labels are reviewed"
+  ]
+}
