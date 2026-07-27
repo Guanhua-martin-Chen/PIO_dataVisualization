@@ -22,9 +22,9 @@
 
 PIO Demand Intelligence Platform（V1）是一个面向汽车零部件规划团队的 Web 工作台，取代了早期的 Streamlit MVP 原型。
 
-V1 专注于第一个核心业务需求：**从 Excel 工作簿中提取、清洗、分类数据，并在进入异常检测和销量预测模块之前，提供一个可靠的数据全貌视图。**
+V1 覆盖从 Excel 导入、可信 EDA 到分层预测和企业导出的完整主流程：**先建立可审计的数据与品牌口径，再生成可解释、可对账的 Revenue、PIO Quantity 和 Wholesale Forecast。**
 
-平台已在包含约 **199,000 行**销售记录的真实数据集上完成测试，所有表格浏览均采用服务端分页，不会将完整数据集加载进浏览器。
+平台已在当前参考工作簿的 **478,125 行 PIO 销售记录**上完成测试，所有表格浏览均采用服务端分页，不会将完整数据集加载进浏览器。
 
 ---
 
@@ -62,6 +62,43 @@ V1 专注于第一个核心业务需求：**从 Excel 工作簿中提取、清�
 - 度量可切换安装数量、销售金额、记录数；聚合支持求和 / 平均 / 计数
 - 服务端聚合，沿用 Data Workspace 的全部过滤条件
 - 自动带行 / 列 / 总计，可一键导出当前透视结果为 CSV
+
+### 🔎 EDA Dashboard（探索性数据分析）
+- **可信数据范围**：业务 EDA 与 Forecast Center 以 `PIO_Sales_Data` 和 `Vehicle_Wholesale_Data` 为事实来源；`Working_Days` 与 `PLC_Legend` 仅作为日历和分类参考，不把其他辅助工作表混入销量分析
+- **数据质量诊断**：检查关键字段缺失、负数量/收入、零安装量、单位收入极端值，以及零件号与描述的一对多差异
+- **车型与品牌映射**：优先使用标准化车型名和 dealer-wholesale 精确映射，保留原始 `H` / `K` source code，同时生成独立的 `HMA` / `GMA` / `KUS` forecast anchor
+- **生命周期审计**：显示车型首次/最后正销量月份、停产、当年无销量、reintroduced 和新车型证据；Excel 数值型 `-1` sentinel 在进入分析前统一转为 `0`
+- **关系与趋势图**：展示月度 PIO Quantity、PIO Revenue、dealer Wholesale、PNVW、Top 车型和 Top 零件；`PNVW = PIO Revenue / dealer wholesale units`
+
+### 🧱 月度事实表与三品牌 Anchor
+- 事实表粒度为 `month × anchor brand × model × PLC × PIS_PNO`，覆盖 2023-01 至当前数据 cutoff
+- 官方 anchor 为 `HMA`、`GMA`、`KUS`；不会再把 Hyundai 与 Genesis 合并成单一 `H`
+- 当前业务口径下，三个 anchor 均使用 dealer / non-fleet wholesale；Fleet 不会加入 PIO Quantity、PIO Revenue 或 PNVW 分母
+- 当前参考工作簿的 PIO 与 Wholesale cutoff 同步为 `2026-07-22`
+
+### 📈 Forecast Center（分层预测）
+- **PIO Revenue**：直接预测 `SumOfPIS_CRP_CFM_PRI` 的 accessory sales revenue；源数据没有成本或毛利字段，因此这里是收入预测，不是利润预测
+- **PIO Quantity**：月度目标为 `SUM(SumOfPIS_INST_QT)`；该字段是 installed accessory quantity，不是 vehicle wholesale
+- **Wholesale Quantity**：使用 dealer / non-fleet vehicle wholesale，可查看 `HMA/GMA/KUS → Model`；Wholesale 没有 PLC 维度
+- **层级与对账**：Brand 是正式统计 anchor；Model 与 PLC 使用数量信号和 Expected Unit Revenue 分配，并在每个月严格满足 `Σ Model = Brand`、`Σ PLC = Model`
+- **Expected Unit Revenue**：PIO revenue / installed accessory quantity。Model/PLC 优先使用最近 3 个完整月，再回退到自身历史或父级最近 6 个月；exact-part planning 明确使用最近 6 个完整月
+- **PLC 与零件输出**：页面 PLC 视图显示历史收入最高的 Top 10，完整导出保留全部合格的 `Brand × Model × PLC`；`Part_Planning` 再分配到具体 `PIS_PNO`
+- **停产与低销量分流**：当年已观察至少 6 个月后仍无正销量的车型按 inactive 处理并保持零预测；低销量/不足 6 个 active months 的序列不进入常规分配；新车型和当年仍有销量的 reintroduced 车型使用 recent run-rate proxy
+
+### 🧮 模型、Working Days 与准确率
+- `Auto` 会让合格的统计 baseline 与 OLS driver regression 比较独立验证 WAPE；`Baseline auto` 只比较统计 baseline；也可强制选择某个合格模型
+- Revenue 另提供已验证的 `reference_portfolio`：HMA 使用优化 Holt-Winters、GMA 使用 Last-Month Revenue、KUS 使用 Working-Day-Adjusted Seasonal；它只适用于 Revenue Brand anchor，当前仍保留 `Auto` 为默认
+- 候选模型包括 naive、mean、weighted moving average、trailing-12 mean、trend、seasonal naive/mean、additive ETS、Croston SBA；ETS 至少需要 24 个月，季节模型与 OLS 至少需要 18 个月
+- Working Days 是工作簿给出的**整月业务工作日暴露量**，不是日期号或自然日数；OLS 将其作为标准化特征，其他 baseline/层级分配使用工作日比例调整
+- 2026-07 显示为截至 7 月 22 日的 MTD actual 加剩余月份预测所组成的 full-month nowcast；2026-08 起才是纯 forecast
+- 准确率只在 `month × official brand anchor` 上做独立 expanding-window holdout；Model、PLC 和具体零件目前是对账分配，不单独宣称模型准确率
+
+### 📤 Output 与业务校验
+- 页面提供 Forecast Center 结果、解释、模型选择、signals 和 reconciliation 状态，并支持当前视图 CSV
+- SOP Excel 包含 `Executive_Summary`、`Revenue_Forecast`、`Quantity_Forecast`、`Part_Planning`、`Wholesale_Drivers`、`Model_Performance` 和 `QA_Assumptions`
+- 当前参考工作簿包含 21 个 PLC 且无 PLC 空值；21 类的 Quantity 与 Revenue 汇总分别精确对回全部 PIO Quantity 与 PIO Revenue
+- 当前独立品牌 anchor 回测准确率为 Revenue `83.03%`、PIO Quantity `83.84%`、Wholesale Quantity `93.09%`；这些数字不是 Model/PLC 准确率，也未被包装成 95%
+- 可运行 `python scripts/validate_anchor_policy.py <workbook.xlsx> --horizon 6` 重建 mapping、cutoff、lifecycle、accuracy 与 reconciliation 检查
 
 ---
 
@@ -111,7 +148,15 @@ V1 专注于第一个核心业务需求：**从 Excel 工作簿中提取、清�
 │   ├── config.py            # 字段角色匹配规则配置
 │   ├── filters.py           # 数据过滤逻辑
 │   ├── charts.py            # 图表数据构建
+│   ├── fact_table.py        # HMA/GMA/KUS 月度事实表与 Wholesale/Working Days 关联
+│   ├── model_entities.py    # 车型实体、生命周期与停产/新车型分流
+│   ├── hierarchical_forecasting.py # 统计模型、OLS、Working Days、独立回测
+│   ├── forecast_center.py   # Brand → Model → PLC 对账预测
+│   ├── sop_workbook.py      # Executive Summary 与详细 SOP Excel
 │   └── i18n.py              # 多语言支持
+│
+├── scripts/
+│   └── validate_anchor_policy.py # 真实工作簿业务口径验证
 │
 ├── requirements.txt         # Python 依赖
 ├── .gitignore
@@ -162,6 +207,9 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 | `GET` | `/api/health` | 健康检查 |
 | `POST` | `/api/workbooks/upload` | 上传 Excel 文件，返回工作区完整数据 |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}` | 获取指定工作表的分页数据（支持过滤、排序） |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}/monthly-facts` | 获取 HMA/GMA/KUS 月度事实表与覆盖率摘要 |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}/forecast-center` | 获取 Revenue / PIO Quantity / Wholesale 的分层预测 |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}/forecast-center/export.xlsx` | 导出 Executive Summary 与完整 Forecast SOP Excel |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}/pivot` | 服务端透视聚合（rows / cols / measure / agg + 过滤条件） |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}/export.csv` | 导出当前过滤切片为 CSV |
 
@@ -169,11 +217,11 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 
 ## 路线图
 
-- [ ] **异常检测**：识别销量异常月份，定位问题零件/车型
-- [ ] **驱动力分析**：解释按零件/车型/月份维度的涨跌原因
-- [ ] **需求预测**：生成下月/下年销量预测
-- [ ] **渗透率分析**：结合整车批发数据计算零件装配渗透率
-- [ ] **库存建议**：基于预测输出库存补货推荐
+- [ ] **品牌准确率改进**：继续诊断 HMA Revenue / PIO Quantity 的结构变化；当前结果不能在没有独立回测证据时宣称 95%
+- [ ] **Executive Summary PDF**：增加网站内预览和 PDF 导出；当前已完成的是 Executive Summary + 详细 Forecast Excel
+- [ ] **Accessory 生命周期面板**：在 EDA 中单独标出长期停止销售的 `PIS_PNO`；当前 part planning 已通过 recent-6 和低销量门槛避免给长期无销量零件分配
+- [ ] **HMA Fleet 情景**：如业务方确认 HMA 需要 wholesale + fleet，再作为显式可审计情景加入；当前正式口径仍为 dealer wholesale
+- [ ] **库存建议**：基于对账后的 Quantity Forecast 生成补货与安全库存建议
 
 ---
 ---
@@ -202,9 +250,9 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 
 PIO Demand Intelligence Platform (V1) is a web workspace for automotive parts planning teams, replacing an earlier Streamlit MVP prototype.
 
-V1 is built around a single core business need: **extract, clean, and classify data from Excel workbooks, and surface a reliable dataset overview before the anomaly-detection and forecasting modules come online.**
+V1 covers the primary workflow from Excel intake and governed EDA through hierarchical forecasting and enterprise export: **establish an auditable data/anchor policy first, then produce explainable and reconciled Revenue, PIO Quantity, and Wholesale forecasts.**
 
-The platform has been tested against a real-world dataset of approximately **199,000 sales rows**. All table browsing is server-side paginated — the full dataset is never loaded into the browser.
+The platform has been tested against the current reference workbook's **478,125 PIO sales rows**. All table browsing is server-side paginated — the full dataset is never loaded into the browser.
 
 ---
 
@@ -242,6 +290,43 @@ The platform has been tested against a real-world dataset of approximately **199
 - Switch the measure between installation quantity, sales revenue, and record count; aggregate by sum / average / count
 - Server-side aggregation that honors every Data Workspace filter
 - Row, column, and grand totals included; export the current pivot to CSV in one click
+
+### 🔎 EDA Dashboard
+- **Governed source scope**: business EDA and Forecast Center use `PIO_Sales_Data` and `Vehicle_Wholesale_Data` as fact sources; `Working_Days` and `PLC_Legend` are calendar/classification references, so unrelated helper sheets are not mixed into sales analysis
+- **Data-quality diagnostics**: checks required-field gaps, negative quantity/revenue, zero installation quantity, unit-revenue outliers, and one-to-many part-number/description mappings
+- **Model and anchor mapping**: matches normalized model names to dealer wholesale, retains the original `H` / `K` source code, and assigns separate `HMA` / `GMA` / `KUS` forecast anchors
+- **Lifecycle evidence**: shows first/last positive months, discontinued, no-current-year activity, reintroduced, and new-model evidence; numeric Excel `-1` sentinels are normalized to `0` before analysis
+- **Relationships and trends**: monthly PIO Quantity, PIO Revenue, dealer Wholesale, PNVW, top models, and top parts; `PNVW = PIO Revenue / dealer wholesale units`
+
+### 🧱 Monthly Fact Table and Three-Anchor Policy
+- Fact grain is `month × anchor brand × model × PLC × PIS_PNO`, covering January 2023 through the current data cutoff
+- Official anchors are `HMA`, `GMA`, and `KUS`; Hyundai and Genesis are no longer collapsed into one `H` forecast anchor
+- Under the current business rule, all three anchors use dealer / non-fleet wholesale. Fleet is not added to PIO Quantity, PIO Revenue, or the PNVW denominator
+- The current reference workbook has a synchronized PIO and Wholesale cutoff of `2026-07-22`
+
+### 📈 Forecast Center
+- **PIO Revenue** directly forecasts accessory sales revenue from `SumOfPIS_CRP_CFM_PRI`. The source has no cost or margin field, so this is revenue—not profit
+- **PIO Quantity** uses monthly `SUM(SumOfPIS_INST_QT)`, meaning installed accessory units rather than vehicle wholesale
+- **Wholesale Quantity** uses dealer / non-fleet vehicle wholesale and supports `HMA/GMA/KUS → Model`; it has no PLC dimension
+- **Hierarchy and reconciliation**: Brand is the official statistical anchor. Model and PLC are allocated from quantity signals and Expected Unit Revenue, with monthly controls enforcing `Σ Model = Brand` and `Σ PLC = Model`
+- **Expected Unit Revenue** is PIO revenue per installed accessory unit. Model/PLC uses the latest three complete months, then own history, then the parent's recent-six value; exact-part planning explicitly uses six complete months
+- **PLC and part output**: the web PLC view shows the top 10 by historical revenue, while the detailed export retains all eligible `Brand × Model × PLC` rows and allocates them to exact `PIS_PNO` rows in `Part_Planning`
+- **Lifecycle and volume routing**: after at least six months of the current year are observed, models with no positive current-year volume are inactive and remain zero; low-volume/short-history series are excluded from regular allocation; new and current-year-active reintroduced models use a recent run-rate proxy
+
+### 🧮 Models, Working Days, and Accuracy
+- `Auto` compares eligible statistical baselines with OLS driver regression on validation WAPE; `Baseline auto` restricts selection to statistical baselines; an eligible model may also be forced
+- Revenue also exposes a validated `reference_portfolio`: optimized Holt-Winters for HMA, Last-Month Revenue for GMA, and Working-Day-Adjusted Seasonal for KUS. It is limited to Revenue Brand anchors, while `Auto` remains the default
+- Candidates include naive, mean, weighted moving average, trailing-12 mean, trend, seasonal naive/mean, additive ETS, and Croston SBA. ETS needs at least 24 months; seasonal models and OLS need at least 18 months
+- Working Days is the workbook's **full-month business-day exposure**, not the calendar day number. OLS learns it as a standardized feature; other baselines and allocations use working-day ratio adjustments
+- July 2026 is a full-month nowcast composed of MTD actual through July 22 plus an estimate for the remaining month. Pure forecast begins in August 2026
+- Accuracy is independently backtested only at `month × official brand anchor`. Model, PLC, and exact-part values are reconciled allocations and do not currently claim separate model accuracy
+
+### 📤 Output and Business Controls
+- The web workspace exposes Forecast Center results, interpretation, selected models, signals, and reconciliation status, plus current-view CSV export
+- The SOP Excel contains `Executive_Summary`, `Revenue_Forecast`, `Quantity_Forecast`, `Part_Planning`, `Wholesale_Drivers`, `Model_Performance`, and `QA_Assumptions`
+- The current reference workbook has 21 non-missing PLC categories; their Quantity and Revenue totals reconcile exactly to total PIO Quantity and PIO Revenue
+- Current independent brand-anchor accuracy is Revenue `83.03%`, PIO Quantity `83.84%`, and Wholesale Quantity `93.09%`. These are not Model/PLC accuracy scores and are not presented as 95%
+- Run `python scripts/validate_anchor_policy.py <workbook.xlsx> --horizon 6` to reproduce mapping, cutoff, lifecycle, accuracy, and reconciliation checks
 
 ---
 
@@ -291,7 +376,15 @@ The platform has been tested against a real-world dataset of approximately **199
 │   ├── config.py            # Field-role matching rule configuration
 │   ├── filters.py           # Data filtering logic
 │   ├── charts.py            # Chart payload construction
+│   ├── fact_table.py        # HMA/GMA/KUS monthly facts and Wholesale/Working Days joins
+│   ├── model_entities.py    # Model entities and lifecycle routing
+│   ├── hierarchical_forecasting.py # Statistical models, OLS, Working Days, backtests
+│   ├── forecast_center.py   # Reconciled Brand → Model → PLC forecast
+│   ├── sop_workbook.py      # Executive Summary and detailed SOP Excel
 │   └── i18n.py              # Internationalization support
+│
+├── scripts/
+│   └── validate_anchor_policy.py # Reference-workbook business-policy validation
 │
 ├── requirements.txt         # Python dependencies
 ├── .gitignore
@@ -359,6 +452,9 @@ If no AI key is configured, the AI Analyst still works in `grounded_tools` mode 
 | `POST` | `/api/workbooks/upload` | Upload an Excel file; returns the full workspace payload |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}` | Fetch paginated sheet data with filter and sort support |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}?include_eda_dashboard=true` | Fetch the workspace payload with the optional EDA dashboard diagnostics |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}/monthly-facts` | Fetch the HMA/GMA/KUS monthly fact table and coverage summary |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}/forecast-center` | Fetch hierarchical Revenue / PIO Quantity / Wholesale forecasts |
+| `GET` | `/api/workbooks/{id}/sheets/{sheet}/forecast-center/export.xlsx` | Export the Executive Summary and full Forecast SOP Excel |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}/pivot` | Server-side pivot aggregation (rows / cols / measure / agg + filters) |
 | `GET` | `/api/workbooks/{id}/sheets/{sheet}/export.csv` | Export the current filtered slice as CSV |
 
@@ -380,62 +476,11 @@ If no AI key is configured, the AI Analyst still works in `grounded_tools` mode 
 
 ## Roadmap
 
-V1 is the data-preparation and field-classification foundation. Planned modules:
-
-- [ ] **Anomaly Detection** — identify abnormal sales months and pinpoint problem parts / models
-- [ ] **Driver Analysis** — explain rises and declines across part / model / month dimensions
-- [ ] **Forecast Center** — generate next-month and next-year demand forecasts
-- [ ] **Penetration Analysis** — calculate part fitment penetration against vehicle wholesale data
-- [ ] **Inventory Recommendations** — produce replenishment suggestions from forecast output
-
----
-
-## EDA & Visual Charts Update / EDA 与可视化图表更新
-
-### EDA Dashboard / 探索性数据分析
-
-- **Data quality diagnostics / 数据质量诊断**: checks missing key fields, negative revenue, negative installation quantity, zero installation quantity, and unit-price p01 / p99 outliers.
-- **Part number vs description discrepancies / 零件号与描述差异检查**: checks whether one `PIS_PNO` maps to multiple `Part Description` values. Case-only or spacing-only differences are shown as format warnings, not true description mismatches.
-- **Top brand revenue / 品牌收入排行**: groups by `PIS_CMP_KND` and sums `SumOfPIS_CRP_CFM_PRI`.
-- **Wholesale relationship check / Wholesale 关联检查**: matches normalized `Model` names first, reports model-name coverage and shared model codes, and uses `PIS_SERI` / `Model Code` only as a fallback when the wholesale code identifies one model uniquely.
-- **PNVW definition / PNVW 计算口径**: `PNVW = SumOfPIS_CRP_CFM_PRI / wholesale units`. The numerator uses dollar revenue from `SumOfPIS_CRP_CFM_PRI`, not installation quantity from `SumOfPIS_INST_QT`.
-
-### Visual Charts Additions / 可视化图表补充
-
-- Existing charts remain in Visual Charts: `Monthly installation quantity`, `Monthly revenue`, `Top vehicle models by revenue`, and `Top parts by revenue`.
-- Added `Wholesale monthly trend`: monthly wholesale units aggregated from the wholesale worksheet.
-- Added `PNVW monthly trend`: monthly `SumOfPIS_CRP_CFM_PRI / wholesale units`.
-- Wholesale and PNVW trend charts use complete months only. For example, if PIO sales data includes an incomplete June, these trend charts stop at May.
-
-### Calculation Notes / 计算说明
-
-- `Monthly installation quantity` = month-level sum of `SumOfPIS_INST_QT`.
-- `Monthly revenue` = month-level sum of `SumOfPIS_CRP_CFM_PRI`.
-- `Top parts by revenue` = group by part description or part number, then sum `SumOfPIS_CRP_CFM_PRI`.
-- `Top vehicle models by revenue` = group by `Model`, then sum `SumOfPIS_CRP_CFM_PRI`.
-- `Wholesale monthly trend` = group matched wholesale rows by month, then sum wholesale units.
-- `PNVW monthly trend` = monthly `SumOfPIS_CRP_CFM_PRI` divided by monthly wholesale units.
-
-### Model Entities and Lifecycle / 车型实体与生命周期
-
-- Model entities use normalized `brand + model name` keys. Model codes remain descriptive attributes, so distinct names that share a code are not merged.
-- The lifecycle table is calculated from positive monthly PIO activity. It identifies models discontinued through 2024, later inactivity, and reintroduction after a gap of at least 12 months, with evidence months shown in EDA.
-- Excel date values, including mixed Excel serials and text dates, are normalized before analysis. Numeric `-1` sentinels are converted to `0` at ingestion.
-
-### 2023–2026 Monthly Fact Table / 2023–2026 月度事实表
-
-- Grain: `month × brand × model entity × accessory`.
-- Measures include installation quantity, PIO revenue, wholesale units, PNVW, working days, and quantity per working day.
-- `GET /api/workbooks/{id}/sheets/{sheet}/monthly-facts` returns the filterable fact-table summary and rows.
-
-### Hierarchical Forecasting / 分层预测
-
-- Forecast levels are brand, model, and model × accessory. Brand and model levels can use automatic selection or a forced eligible statistical model; model × accessory always selects the best eligible model independently for each series.
-- Statistical candidates include naive last, mean, moving-average, trend, seasonal-naive/mean, and Croston SBA baselines. Optional OLS driver regression learns trend, working-day, and annual sine/cosine coefficients from history.
-- Low-volume series are excluded when the historical monthly average is below the selected threshold or fewer than six active months exist. Discontinued model/model × accessory series are forecast as zero.
-- Accuracy is `max(0, 1 - WAPE)` on an independent expanding-window holdout of the latest 3–6 complete months. Those outer-test months are not used for model selection.
-- Tariff impact is an explicit post-model quantity scenario, `forecast × max(0, 1 + tariffImpactPct / 100)`; it is not presented as a learned historical tariff effect.
-- `GET /api/workbooks/{id}/sheets/{sheet}/hierarchical-forecast` returns forecasts, selected models, learned coefficients, and backtest diagnostics.
+- [ ] **Brand accuracy improvement** — continue diagnosing structural change in HMA Revenue / PIO Quantity; do not claim 95% without independent backtest evidence
+- [ ] **Executive Summary PDF** — add in-site preview and PDF export; the current deliverable is Executive Summary plus detailed Forecast Excel
+- [ ] **Accessory lifecycle panel** — expose long-inactive `PIS_PNO` rows directly in EDA; current part planning already uses recent-six activity and volume eligibility to prevent allocation to long-inactive parts
+- [ ] **HMA Fleet scenario** — add wholesale + fleet only if the business owner confirms it as an explicit, auditable scenario; the official rule remains dealer wholesale
+- [ ] **Inventory recommendations** — produce replenishment and safety-stock recommendations from reconciled Quantity Forecasts
 
 ---
 

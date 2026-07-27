@@ -13,6 +13,10 @@ from pio_platform.forecasting import (
     preprocess_history,
     select_best_model,
 )
+from pio_platform.ets_experiments import (
+    VALIDATED_HMA_REVENUE_SPEC,
+    forecast_ets_candidate,
+)
 
 
 FORECAST_LEVELS = {"brand", "model", "model_accessory"}
@@ -22,7 +26,13 @@ STATISTICAL_MODELS = {
     "trend_adjusted_moving_average", "damped_trend", "log_linear_trend",
     "seasonal_naive", "seasonal_mean", "ets_additive", "croston_sba",
 }
-MODEL_STRATEGIES = {"auto", "baseline_auto", "driver_adjusted_regression", *STATISTICAL_MODELS}
+MODEL_STRATEGIES = {
+    "auto",
+    "baseline_auto",
+    "driver_adjusted_regression",
+    "reference_portfolio",
+    *STATISTICAL_MODELS,
+}
 
 
 def build_hierarchical_forecast(
@@ -36,6 +46,7 @@ def build_hierarchical_forecast(
     tariff_impact_pct: float = 0.0,
     min_monthly_volume: float = 5.0,
     model_strategy: str = "auto",
+    target_metric: str = "quantity",
     limit: int = 100,
     latest_month_is_complete: bool = False,
     check_latest_volume: bool = True,
@@ -44,6 +55,12 @@ def build_hierarchical_forecast(
         raise ValueError(f"Unsupported forecast level: {level}")
     if model_strategy not in MODEL_STRATEGIES:
         raise ValueError(f"Unsupported model strategy: {model_strategy}")
+    if model_strategy == "reference_portfolio" and (
+        level != "brand" or target_metric != "revenue"
+    ):
+        raise ValueError(
+            "reference_portfolio is available only for Forecast Center Revenue Brand anchors."
+        )
     if level == "model_accessory" and model_strategy != "auto":
         raise ValueError(
             "Model × accessory forecasting always uses automatic per-series model selection; "
@@ -134,6 +151,7 @@ def build_hierarchical_forecast(
         final_selection = _select_forecast_candidate(
             series,
             working_day_map,
+            entity=str(dimensions.get("brand", "")),
             horizon=horizon,
             use_working_days=use_working_days,
             use_seasonality=use_seasonality,
@@ -142,6 +160,7 @@ def build_hierarchical_forecast(
         evaluation = _independent_outer_backtest(
             series,
             working_day_map,
+            entity=str(dimensions.get("brand", "")),
             use_working_days=use_working_days,
             use_seasonality=use_seasonality,
             model_strategy=model_strategy,
@@ -172,6 +191,7 @@ def build_hierarchical_forecast(
             "monthlyAverage": monthly_average,
             "latestActual": float(series.iloc[-1]),
             "selectedModel": selected_model,
+            "brandSpecificMethod": selected_model,
             "requestedModelStrategy": model_strategy,
             "selectionNote": final_selection["selectionNote"],
             "learnedCoefficients": final_selection["coefficients"],
@@ -228,12 +248,20 @@ def _select_forecast_candidate(
     series: pd.Series,
     working_day_map: dict[str, float],
     *,
+    entity: str,
     horizon: int,
     use_working_days: bool,
     use_seasonality: bool,
     model_strategy: str,
 ) -> dict[str, Any]:
     history = series.astype(float).tolist()
+    if model_strategy == "reference_portfolio":
+        return _reference_portfolio_selection(
+            series,
+            working_day_map,
+            entity=entity,
+            horizon=horizon,
+        )
     model_name, _, diagnostics = select_best_model(history, use_seasonality=use_seasonality)
     processed_history, _ = preprocess_history(history, diagnostics.preprocessing)
     selection: dict[str, Any] = {
@@ -306,6 +334,7 @@ def _independent_outer_backtest(
     series: pd.Series,
     working_day_map: dict[str, float],
     *,
+    entity: str,
     use_working_days: bool,
     use_seasonality: bool,
     model_strategy: str,
@@ -319,6 +348,7 @@ def _independent_outer_backtest(
     selection = _select_forecast_candidate(
         values.iloc[:split],
         working_day_map,
+        entity=entity,
         horizon=1,
         use_working_days=use_working_days,
         use_seasonality=use_seasonality,
@@ -328,7 +358,14 @@ def _independent_outer_backtest(
     actuals: list[float] = []
     for index in range(split, len(values)):
         expanding = values.iloc[:index]
-        if selection["model"] == "driver_adjusted_regression":
+        if model_strategy == "reference_portfolio":
+            prediction = _reference_portfolio_selection(
+                expanding,
+                working_day_map,
+                entity=entity,
+                horizon=1,
+            )["forecast"][0]
+        elif selection["model"] == "driver_adjusted_regression":
             prediction = _regression_predict(
                 list(expanding.index),
                 expanding.to_numpy(dtype=float),
@@ -355,6 +392,87 @@ def _independent_outer_backtest(
         "mae": float(absolute_error / len(actuals)) if actuals else None,
         "bias": float((predicted_sum - actual_sum) / actual_sum) if actual_sum > 0 else None,
     }
+
+
+def _reference_portfolio_selection(
+    series: pd.Series,
+    working_day_map: dict[str, float],
+    *,
+    entity: str,
+    horizon: int,
+) -> dict[str, Any]:
+    history = series.astype(float).tolist()
+    normalized_entity = str(entity).strip().upper()
+    if normalized_entity == "HMA":
+        forecast, diagnostics = forecast_ets_candidate(
+            history,
+            horizon,
+            VALIDATED_HMA_REVENUE_SPEC,
+        )
+        return {
+            "model": VALIDATED_HMA_REVENUE_SPEC.model_id,
+            "preprocessing": VALIDATED_HMA_REVENUE_SPEC.preprocessing,
+            "forecast": forecast,
+            "wape": None,
+            "selectionNote": (
+                "Validated reference portfolio: HMA uses optimized additive "
+                "Holt-Winters with the governed rolling-24 configuration."
+            ),
+            "coefficients": diagnostics["parameters"],
+        }
+    if normalized_entity == "GMA":
+        return {
+            "model": "naive_last",
+            "preprocessing": "raw",
+            "forecast": forecast_history(history, horizon, "naive_last"),
+            "wape": None,
+            "selectionNote": "Validated reference portfolio: GMA uses Last-Month Revenue.",
+            "coefficients": {},
+        }
+    if normalized_entity == "KUS":
+        if not working_day_map:
+            raise ValueError(
+                "reference_portfolio requires the governed Working_Days calendar for KUS."
+            )
+        return {
+            "model": "working_day_adjusted_seasonal",
+            "preprocessing": "raw",
+            "forecast": _working_day_adjusted_seasonal_forecast(
+                series,
+                horizon,
+                working_day_map,
+            ),
+            "wape": None,
+            "selectionNote": (
+                "Validated reference portfolio: KUS uses Working-Day-Adjusted Seasonal."
+            ),
+            "coefficients": {},
+        }
+    raise ValueError(
+        f"reference_portfolio supports only HMA, GMA, and KUS; received {entity!r}."
+    )
+
+
+def _working_day_adjusted_seasonal_forecast(
+    series: pd.Series,
+    horizon: int,
+    working_day_map: dict[str, float],
+) -> list[float]:
+    values = [max(float(value), 0.0) for value in series.tolist()]
+    last_month = pd.Timestamp(series.index[-1])
+    forecasts: list[float] = []
+    for step in range(1, horizon + 1):
+        target = last_month + pd.offsets.MonthBegin(step)
+        target_key = target.strftime("%Y-%m")
+        prior_key = (target - pd.DateOffset(years=1)).strftime("%Y-%m")
+        seasonal_value = values[-12] if len(values) >= 12 else values[-1]
+        current_days = float(working_day_map.get(target_key, 0.0) or 0.0)
+        prior_days = float(working_day_map.get(prior_key, 0.0) or 0.0)
+        ratio = current_days / prior_days if current_days > 0 and prior_days > 0 else 1.0
+        prediction = max(float(seasonal_value) * ratio, 0.0)
+        forecasts.append(prediction)
+        values.append(prediction)
+    return forecasts
 
 
 def _empty_backtest() -> dict[str, Any]:
