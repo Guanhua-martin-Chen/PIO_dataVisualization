@@ -221,6 +221,7 @@ export default function ForecastCenterPanel({
                   { title: "Official anchor", dataIndex: "brand", key: "brand" },
                   { title: "Requested strategy", dataIndex: "requestedModelStrategy", key: "requestedModelStrategy" },
                   { title: "Brand-specific method", dataIndex: "brandSpecificMethod", key: "brandSpecificMethod" },
+                  { title: "Selected model", dataIndex: "selectedModel", key: "selectedModel" },
                   { title: "Backtest model", dataIndex: "backtestModel", key: "backtestModel" },
                   { title: "History months", dataIndex: "historyMonths", key: "historyMonths", align: "right" as const },
                   { title: "Independent test points", dataIndex: "backtestPoints", key: "backtestPoints", align: "right" as const },
