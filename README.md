@@ -65,6 +65,7 @@ V1 覆盖从 Excel 导入、可信 EDA 到分层预测和企业导出的完整�
 
 ### 🔎 EDA Dashboard（探索性数据分析）
 - **可信数据范围**：业务 EDA 与 Forecast Center 以 `PIO_Sales_Data` 和 `Vehicle_Wholesale_Data` 为事实来源；`Working_Days` 与 `PLC_Legend` 仅作为日历和分类参考，不把其他辅助工作表混入销量分析
+- `Working_Days` 与 `PLC_Legend` 页面会明确显示 `reference sheet — excluded from governed EDA`，不会请求或生成 EDA dashboard
 - **数据质量诊断**：检查关键字段缺失、负数量/收入、零安装量、单位收入极端值，以及零件号与描述的一对多差异
 - **车型与品牌映射**：优先使用标准化车型名和 dealer-wholesale 精确映射，保留原始 `H` / `K` source code，同时生成独立的 `HMA` / `GMA` / `KUS` forecast anchor
 - **生命周期审计**：显示车型首次/最后正销量月份、停产、当年无销量、reintroduced 和新车型证据；Excel 数值型 `-1` sentinel 在进入分析前统一转为 `0`
@@ -77,6 +78,8 @@ V1 覆盖从 Excel 导入、可信 EDA 到分层预测和企业导出的完整�
 - 当前参考工作簿的 PIO 与 Wholesale cutoff 同步为 `2026-07-22`
 
 ### 📈 Forecast Center（分层预测）
+- **统一信息架构**：Forecasting 固定为 `Forecast`、`Exceptions`、`Inventory Planning`、`Output Center`。Forecast 是默认且唯一正式预测入口；旧 Output/Detail/Leaderboard/Series Table/Interpretation/Signals 不再出现在正式路径
+- **独立页面职责**：Exceptions 使用治理后的 `PIO_Sales_Data` 与所有兼容 Wholesale 表，当前标为 Experimental；Inventory Planning 独立请求 reconciled PIO Quantity 的 `Model × PLC` 需求预览，不覆盖 Forecast 结果，也不在缺少 PIS_PNO 库存输入时生成正式补货建议
 - **PIO Revenue**：直接预测 `SumOfPIS_CRP_CFM_PRI` 的 accessory sales revenue；源数据没有成本或毛利字段，因此这里是收入预测，不是利润预测
 - **PIO Quantity**：月度目标为 `SUM(SumOfPIS_INST_QT)`；该字段是 installed accessory quantity，不是 vehicle wholesale
 - **Wholesale Quantity**：使用 dealer / non-fleet vehicle wholesale，可查看 `HMA/GMA/KUS → Model`；Wholesale 没有 PLC 维度
@@ -94,7 +97,7 @@ V1 覆盖从 Excel 导入、可信 EDA 到分层预测和企业导出的完整�
 - 准确率只在 `month × official brand anchor` 上做独立 expanding-window holdout；Model、PLC 和具体零件目前是对账分配，不单独宣称模型准确率
 
 ### 📤 Output 与业务校验
-- 页面提供 Forecast Center 结果、解释、模型选择、signals 和 reconciliation 状态，并支持当前视图 CSV
+- `Output Center` 集中提供当前 Forecast Center 视图 CSV 与 SOP Excel；主页面和预测控制卡不重复放置下载按钮，打开 Output Center 不会重新运行预测
 - SOP Excel 包含 `Executive_Summary`、`Revenue_Forecast`、`Quantity_Forecast`、`Part_Planning`、`Wholesale_Drivers`、`Model_Performance` 和 `QA_Assumptions`
 - 当前参考工作簿包含 21 个 PLC 且无 PLC 空值；21 类的 Quantity 与 Revenue 汇总分别精确对回全部 PIO Quantity 与 PIO Revenue
 - 当前独立品牌 anchor 回测准确率为 Revenue `83.03%`、PIO Quantity `83.84%`、Wholesale Quantity `93.09%`；这些数字不是 Model/PLC 准确率，也未被包装成 95%
@@ -293,6 +296,7 @@ The platform has been tested against the current reference workbook's **478,125 
 
 ### 🔎 EDA Dashboard
 - **Governed source scope**: business EDA and Forecast Center use `PIO_Sales_Data` and `Vehicle_Wholesale_Data` as fact sources; `Working_Days` and `PLC_Legend` are calendar/classification references, so unrelated helper sheets are not mixed into sales analysis
+- `Working_Days` and `PLC_Legend` show `reference sheet — excluded from governed EDA`; the client does not request or build an EDA dashboard for either reference sheet
 - **Data-quality diagnostics**: checks required-field gaps, negative quantity/revenue, zero installation quantity, unit-revenue outliers, and one-to-many part-number/description mappings
 - **Model and anchor mapping**: matches normalized model names to dealer wholesale, retains the original `H` / `K` source code, and assigns separate `HMA` / `GMA` / `KUS` forecast anchors
 - **Lifecycle evidence**: shows first/last positive months, discontinued, no-current-year activity, reintroduced, and new-model evidence; numeric Excel `-1` sentinels are normalized to `0` before analysis
@@ -305,6 +309,8 @@ The platform has been tested against the current reference workbook's **478,125 
 - The current reference workbook has a synchronized PIO and Wholesale cutoff of `2026-07-22`
 
 ### 📈 Forecast Center
+- **Single information architecture**: Forecasting is ordered as `Forecast`, `Exceptions`, `Inventory Planning`, and `Output Center`. Forecast is the default and only official forecast entry; legacy Output/Detail/Leaderboard/Series Table/Interpretation/Signals are hidden from the official path
+- **Separate responsibilities**: Exceptions resolves governed `PIO_Sales_Data` plus every compatible Wholesale sheet and remains Experimental. Inventory Planning makes its own reconciled PIO Quantity `Model × PLC` request, never overwrites Forecast, and does not issue reorder recommendations without governed PIS_PNO inventory inputs
 - **PIO Revenue** directly forecasts accessory sales revenue from `SumOfPIS_CRP_CFM_PRI`. The source has no cost or margin field, so this is revenue—not profit
 - **PIO Quantity** uses monthly `SUM(SumOfPIS_INST_QT)`, meaning installed accessory units rather than vehicle wholesale
 - **Wholesale Quantity** uses dealer / non-fleet vehicle wholesale and supports `HMA/GMA/KUS → Model`; it has no PLC dimension
@@ -322,7 +328,7 @@ The platform has been tested against the current reference workbook's **478,125 
 - Accuracy is independently backtested only at `month × official brand anchor`. Model, PLC, and exact-part values are reconciled allocations and do not currently claim separate model accuracy
 
 ### 📤 Output and Business Controls
-- The web workspace exposes Forecast Center results, interpretation, selected models, signals, and reconciliation status, plus current-view CSV export
+- `Output Center` centralizes the current Forecast Center view CSV and SOP Excel. The major header and forecast-control card do not duplicate downloads, and opening Output Center does not rerun a forecast
 - The SOP Excel contains `Executive_Summary`, `Revenue_Forecast`, `Quantity_Forecast`, `Part_Planning`, `Wholesale_Drivers`, `Model_Performance`, and `QA_Assumptions`
 - The current reference workbook has 21 non-missing PLC categories; their Quantity and Revenue totals reconcile exactly to total PIO Quantity and PIO Revenue
 - Current independent brand-anchor accuracy is Revenue `83.03%`, PIO Quantity `83.84%`, and Wholesale Quantity `93.09%`. These are not Model/PLC accuracy scores and are not presented as 95%

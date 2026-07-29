@@ -732,6 +732,7 @@ def build_anomaly_center(
     model_col: str | None = None,
     part_description_col: str | None = None,
     wholesale_df: pd.DataFrame | None = None,
+    wholesale_long_df: pd.DataFrame | None = None,
     limit: int = 12,
 ) -> dict[str, Any]:
     working = df.copy()
@@ -754,8 +755,16 @@ def build_anomaly_center(
             "records": [],
         }
 
-    wholesale_long = None
-    if wholesale_df is not None and model_col and model_col in df.columns:
+    wholesale_long = wholesale_long_df.copy() if wholesale_long_df is not None else None
+    if wholesale_long is not None and not wholesale_long.empty:
+        required_columns = {"model", "month", "wholesale"}
+        if not required_columns.issubset(wholesale_long.columns):
+            wholesale_long = None
+        else:
+            wholesale_long["month"] = pd.to_datetime(wholesale_long["month"], errors="coerce")
+            wholesale_long["wholesale"] = pd.to_numeric(wholesale_long["wholesale"], errors="coerce")
+            wholesale_long = wholesale_long.dropna(subset=["month", "wholesale"])
+    if wholesale_long is None and wholesale_df is not None and model_col and model_col in df.columns:
         date_values = pd.Series(date_series).dropna()
         if not date_values.empty:
             wholesale_long = prepare_wholesale_long(wholesale_df, start_year=int(date_values.min().year))

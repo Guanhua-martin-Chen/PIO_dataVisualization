@@ -908,11 +908,23 @@ def get_anomaly_center(
     end_date: str = Query(default=""),
 ) -> dict[str, Any]:
     session = _get_session(workbook_id)
-    bundle = _get_bundle(session, sheet_name)
-    wholesale_bundle = _find_wholesale_bundle(session, exclude_sheet=sheet_name)
+    sales_sheet = _forecast_sales_sheet_name(session, sheet_name)
+    bundle = _get_bundle(session, sales_sheet)
+    all_wholesale = _all_wholesale_long(session, sales_sheet)
+    anomaly_wholesale_long = pd.DataFrame(columns=["brand", "model", "month", "wholesale"])
+    if not all_wholesale.empty:
+        anomaly_wholesale_long = all_wholesale.loc[
+            :,
+            ["brand", "modelName", "month", "wholesaleUnits"],
+        ].rename(
+            columns={
+                "modelName": "model",
+                "wholesaleUnits": "wholesale",
+            }
+        )
     return _build_anomaly_center_payload(
         bundle=bundle,
-        wholesale_bundle=wholesale_bundle,
+        wholesale_bundle=None,
         search=search,
         brand=brand,
         model=model,
@@ -920,6 +932,7 @@ def get_anomaly_center(
         part=part,
         start_date=start_date,
         end_date=end_date,
+        wholesale_long=anomaly_wholesale_long,
     )
 
 
@@ -2555,6 +2568,7 @@ def _build_anomaly_center_payload(
     part: list[str],
     start_date: str,
     end_date: str,
+    wholesale_long: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     date_col = bundle.roles.get("date")
     qty_col = bundle.roles.get("installation_quantity")
@@ -2594,6 +2608,7 @@ def _build_anomaly_center_payload(
         model_col=model_col,
         part_description_col=part_description_col,
         wholesale_df=wholesale_bundle.dataframe if wholesale_bundle else None,
+        wholesale_long_df=wholesale_long,
         limit=12,
     )
     anomaly_center["filters"] = {
