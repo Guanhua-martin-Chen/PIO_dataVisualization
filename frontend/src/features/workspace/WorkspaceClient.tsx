@@ -34,7 +34,7 @@ import {
 import type { TableColumnsType, TablePaginationConfig } from "antd";
 import type { FilterValue, SorterResult } from "antd/es/table/interface";
 import ReactECharts from "echarts-for-react";
-import { useEffect, useState, use } from "react";
+import { useEffect, useRef, useState, use } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
 import dayjs from "dayjs";
 import Link from "next/link";
@@ -118,6 +118,10 @@ function escapeCsvCell(value: string | number | null | undefined) {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export default function WorkspacePage({ params }: WorkspacePageProps) {
   const { id } = use(params);
   const router = useRouter();
@@ -149,6 +153,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [forecastData, setForecastData] = useState<ForecastPayload | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastView, setForecastView] = useState("hierarchy");
+  const [forecastSubTab, setForecastSubTab] = useState("anomaly");
   const [hierarchicalForecast] = useState<HierarchicalForecastPayload | null>(null);
   const [forecastCenterData, setForecastCenterData] = useState<ForecastCenterPayload | null>(null);
   const [hierarchicalForecastLoading, setHierarchicalForecastLoading] = useState(false);
@@ -181,6 +186,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [pivotMeasure, setPivotMeasure] = useState("quantity");
   const [pivotAgg, setPivotAgg] = useState("sum");
   const [pivotDragField, setPivotDragField] = useState<string | null>(null);
+  const legacyForecastRequest = useRef<AbortController | null>(null);
+  const forecastCenterRequest = useRef<AbortController | null>(null);
+  const anomalyRequest = useRef<AbortController | null>(null);
   const pivotFilterKey = JSON.stringify({
     search: tableState.search,
     brand: tableState.brand,
@@ -211,6 +219,20 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       localStorage.setItem(visibilityKey, JSON.stringify(visibleColumns));
     }
   }, [visibleColumns, workspace, id]);
+
+  useEffect(() => () => {
+    legacyForecastRequest.current?.abort();
+    forecastCenterRequest.current?.abort();
+    anomalyRequest.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!workspace || activeTab !== "forecasting") return;
+    loadForecastSurface(forecastSubTab);
+    // Surface reload is intentionally keyed only to worksheet identity.
+    // Opening Forecasting is handled by handleMajorTabChange.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace?.sheetName]);
 
   // Initial status check & polling
   useEffect(() => {
@@ -311,6 +333,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       }
       const isNewSheet = !workspace || workspace.sheetName !== payload.sheetName;
       if (isNewSheet || columnOrder.length === 0) {
+        if (isNewSheet) {
+          cancelForecastSurfaceRequests();
+          setAnomalyData(null);
+          setForecastData(null);
+          setForecastCenterData(null);
+        }
         // Load custom column order from localStorage if available
         const cacheKey = `col_order_${id}_${payload.sheetName}`;
         const cachedOrder = localStorage.getItem(cacheKey);
@@ -342,17 +370,14 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           setVisibleColumns(payload.table.columns.map((c) => c.key));
         }
 
-        // Fetch chart data on new sheet load
+        // The initial workspace payload already contains the overview/chart data.
+        // Reuse it instead of issuing the same worksheet request a second time.
         const initialChartState = { ...defaultTableState, pageSize: state.pageSize };
         setChartFilterState(initialChartState);
-        loadChartData(payload.sheetName, initialChartState);
-        loadAnomalyData(payload.sheetName, initialChartState);
+        setChartData(payload);
         if (payload.sheetName === governedForecastSheet) {
           setForecastFilterState(initialChartState);
-          loadForecastData(governedForecastSheet, initialChartState, "", forecastHorizon);
-          loadHierarchicalForecast(governedForecastSheet, initialChartState, "brand", "revenue");
         }
-        loadAnalystMemories(payload.sheetName);
       }
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "Failed to load worksheet data.");
@@ -404,23 +429,33 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       params.set("part_number", nextPart);
     }
 
+    legacyForecastRequest.current?.abort();
+    const controller = new AbortController();
+    legacyForecastRequest.current = controller;
+    setForecastData(null);
     setForecastLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast?${params.toString()}`
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast?${params.toString()}`,
+        { signal: controller.signal },
       );
       if (!response.ok) {
         throw new Error((await response.json()).detail ?? "Failed to load forecast view.");
       }
       const payload = (await response.json()) as ForecastPayload;
+      if (controller.signal.aborted) return;
       setForecastData(payload);
       setForecastPart(payload.selectedPart);
       setAiFocusPart((current) => current || payload.selectedPart);
       setForecastHorizon(horizon);
     } catch (err) {
+      if (isAbortError(err)) return;
       messageApi.error(err instanceof Error ? err.message : "Failed to load forecast view.");
     } finally {
-      setForecastLoading(false);
+      if (legacyForecastRequest.current === controller) {
+        legacyForecastRequest.current = null;
+        setForecastLoading(false);
+      }
     }
   }
 
@@ -467,33 +502,50 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     params.set("model_strategy", hierarchyModelStrategy);
     params.set("min_monthly_volume", String(minimumMonthlyVolume));
     params.set("top_n", "10");
+    forecastCenterRequest.current?.abort();
+    const controller = new AbortController();
+    forecastCenterRequest.current = controller;
+    setForecastCenterData(null);
     setHierarchicalForecastLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center?${params.toString()}`
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center?${params.toString()}`,
+        { signal: controller.signal },
       );
       if (!response.ok) {
         throw new Error((await response.json()).detail ?? "Failed to run hierarchical forecast.");
       }
-      setForecastCenterData((await response.json()) as ForecastCenterPayload);
+      const payload = (await response.json()) as ForecastCenterPayload;
+      if (controller.signal.aborted) return;
+      setForecastCenterData(payload);
     } catch (err) {
+      if (isAbortError(err)) return;
       messageApi.error(err instanceof Error ? err.message : "Failed to run hierarchical forecast.");
     } finally {
-      setHierarchicalForecastLoading(false);
+      if (forecastCenterRequest.current === controller) {
+        forecastCenterRequest.current = null;
+        setHierarchicalForecastLoading(false);
+      }
     }
   }
 
   async function loadAnomalyData(sheetName: string, state: TableState) {
     const params = buildWorkspaceParams({ ...state, page: 1 });
+    anomalyRequest.current?.abort();
+    const controller = new AbortController();
+    anomalyRequest.current = controller;
+    setAnomalyData(null);
     setAnomalyLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/anomaly-center?${params.toString()}`
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/anomaly-center?${params.toString()}`,
+        { signal: controller.signal },
       );
       if (!response.ok) {
         throw new Error((await response.json()).detail ?? "Failed to load anomaly center.");
       }
       const payload = (await response.json()) as AnomalyCenterPayload;
+      if (controller.signal.aborted) return;
       setAnomalyData(payload);
       setAnomalyFocusPart((current) => {
         if (current && payload.records.some((record) => record.part === current)) {
@@ -502,9 +554,13 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         return payload.records[0]?.part ?? "";
       });
     } catch (err) {
+      if (isAbortError(err)) return;
       messageApi.error(err instanceof Error ? err.message : "Failed to load anomaly center.");
     } finally {
-      setAnomalyLoading(false);
+      if (anomalyRequest.current === controller) {
+        anomalyRequest.current = null;
+        setAnomalyLoading(false);
+      }
     }
   }
 
@@ -631,10 +687,10 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   // Rebuild the pivot whenever its configuration changes (and the sheet is ready).
   useEffect(() => {
-    if (!workspace) return;
+    if (!workspace || dataSubTab !== "pivot") return;
     loadPivotData(workspace.sheetName, tableState, pivotRows, pivotCols, pivotMeasure, pivotAgg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace?.sheetName, pivotRows, pivotCols, pivotMeasure, pivotAgg, pivotFilterKey]);
+  }, [workspace?.sheetName, dataSubTab, pivotRows, pivotCols, pivotMeasure, pivotAgg, pivotFilterKey]);
 
   function movePivotField(field: string, target: "rows" | "cols" | "available") {
     setPivotRows((prev) => prev.filter((f) => f !== field));
@@ -773,6 +829,76 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     }
     if (key === "monthly-facts" && workspace) {
       loadMonthlyFacts(workspace.sheetName, tableState, 1, monthlyFacts?.pageSize ?? 100);
+    }
+  }
+
+  function loadForecastSurface(key: string) {
+    if (!workspace) return;
+    if (key === "anomaly") {
+      if (!anomalyRequest.current) {
+        loadAnomalyData(workspace.sheetName, tableState);
+      }
+      return;
+    }
+    if (key === "forecast") {
+      if (forecastView === "hierarchy") {
+        if (!forecastCenterRequest.current) {
+          loadHierarchicalForecast(
+            resolveForecastSheetName(workspace.sheetName),
+            forecastFilterState,
+            hierarchyLevel,
+            forecastMetric,
+          );
+        }
+      } else if (!legacyForecastRequest.current) {
+        loadForecastData(
+          resolveForecastSheetName(workspace.sheetName),
+          forecastFilterState,
+          forecastPart,
+          forecastHorizon,
+        );
+      }
+      return;
+    }
+    if (key === "inventory" && !legacyForecastRequest.current) {
+      loadForecastData(
+        resolveForecastSheetName(workspace.sheetName),
+        forecastFilterState,
+        forecastPart,
+        forecastHorizon,
+      );
+    }
+  }
+
+  function cancelForecastSurfaceRequests() {
+    const legacyController = legacyForecastRequest.current;
+    const forecastCenterController = forecastCenterRequest.current;
+    const anomalyController = anomalyRequest.current;
+    legacyForecastRequest.current = null;
+    forecastCenterRequest.current = null;
+    anomalyRequest.current = null;
+    legacyController?.abort();
+    forecastCenterController?.abort();
+    anomalyController?.abort();
+    setForecastLoading(false);
+    setHierarchicalForecastLoading(false);
+    setAnomalyLoading(false);
+  }
+
+  function handleForecastSubTabChange(key: string) {
+    setForecastSubTab(key);
+    loadForecastSurface(key);
+  }
+
+  function handleMajorTabChange(key: string) {
+    setActiveTab(key);
+    if (key === "forecasting") {
+      loadForecastSurface(forecastSubTab);
+      return;
+    }
+    cancelForecastSurfaceRequests();
+    if (key === "agent" && workspace) {
+      loadAnalystMemories(workspace.sheetName);
     }
   }
 
@@ -1770,7 +1896,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
           <Tabs
             activeKey={activeTab}
-            onChange={setActiveTab}
+            onChange={handleMajorTabChange}
             className="workspace-tabs"
             items={[
               {
@@ -2670,7 +2796,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     </Card>
                     <Tabs
                       className="workspace-subtabs"
-                      defaultActiveKey="anomaly"
+                      activeKey={forecastSubTab}
+                      onChange={handleForecastSubTabChange}
                       items={[
               {
                 key: "anomaly",
