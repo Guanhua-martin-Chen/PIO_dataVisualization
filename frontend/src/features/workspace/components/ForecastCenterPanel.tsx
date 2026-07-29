@@ -1,11 +1,11 @@
 "use client";
 
-import { DownloadOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
   Card,
   Col,
+  Collapse,
   Empty,
   Input,
   InputNumber,
@@ -127,8 +127,6 @@ export default function ForecastCenterPanel({
   onTariffImpactChange,
   onMinMonthlyVolumeChange,
   onRun,
-  onExportCsv,
-  onExportXlsx,
 }: ForecastCenterPanelProps) {
   const levelOptions = [
     { label: "Brand", value: "brand" },
@@ -148,12 +146,6 @@ export default function ForecastCenterPanel({
         <Card
           className="content-card"
           title="Forecast Center controls"
-          extra={(
-            <Space wrap>
-              <Button icon={<DownloadOutlined />} onClick={onExportCsv}>Current view CSV</Button>
-              <Button type="primary" icon={<DownloadOutlined />} onClick={onExportXlsx}>SOP Excel</Button>
-            </Space>
-          )}
         >
           <div className="toolbar-grid">
             <Select
@@ -237,7 +229,16 @@ export default function ForecastCenterPanel({
               <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Hierarchy check" value={data.summary.reconciliation.status} /></Card></Col>
             </Row>
 
-            <Card className="content-card" title="Accuracy scope and interpretation">
+            <Collapse
+              className="forecast-method-collapse"
+              defaultActiveKey={[]}
+              items={[
+                {
+                  key: "method-validation",
+                  label: "Method & Validation",
+                  children: (
+                    <div className="tab-stack">
+            <Card className="content-card" title="Accuracy scope and interpretation" variant="borderless">
               <div className="summary-stack">
                 <div className="summary-row"><span className="summary-dot" /><span><strong>Target:</strong> {data.summary.accuracyScope.target}</span></div>
                 <div className="summary-row"><span className="summary-dot" /><span><strong>Evaluated grain:</strong> {data.summary.accuracyScope.evaluatedGrain}</span></div>
@@ -333,7 +334,7 @@ export default function ForecastCenterPanel({
               description={data.summary.periodExplanation}
             />
 
-            <Card className="content-card" title="Business-policy validation">
+            <Card className="content-card" title="Business-policy validation" variant="borderless">
               <Table
                 size="small"
                 pagination={false}
@@ -359,7 +360,7 @@ export default function ForecastCenterPanel({
               </Paragraph>
             </Card>
 
-            <Card className="content-card" title="Model formulas and allocation logic">
+            <Card className="content-card" title="Model formulas and allocation logic" variant="borderless">
               <Table
                 size="small"
                 pagination={false}
@@ -373,6 +374,11 @@ export default function ForecastCenterPanel({
                 scroll={{ x: 900 }}
               />
             </Card>
+                    </div>
+                  ),
+                },
+              ]}
+            />
 
             {metric !== "wholesale_quantity" ? (
               <Card className="content-card" title="Top 10 PLC accessories by historical revenue">
@@ -404,9 +410,16 @@ export default function ForecastCenterPanel({
 
             <Card
               className="content-card"
-              title="Reconciled forecast results"
+              title="Forecast Results"
               extra={<Tag color={data.summary.reconciliation.status === "PASS" ? "green" : "red"}>{data.summary.reconciliation.status}</Tag>}
             >
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="Governed point forecast months"
+                description="This table contains reconciled point forecasts only. Validated lower and upper intervals are intentionally deferred to PR C."
+              />
               <Table
                 size="small"
                 rowKey="seriesKey"

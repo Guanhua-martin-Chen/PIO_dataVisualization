@@ -299,6 +299,20 @@
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
 }
 
+.forecast-method-collapse {
+  background: #fff;
+  border-color: #dbe4f0;
+}
+
+.forecast-method-collapse > .ant-collapse-item > .ant-collapse-header {
+  font-weight: 700;
+  color: #122033;
+}
+
+.output-center-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
 .forecast-governance-table,
 .forecast-governance-table .ant-table-wrapper,
 .forecast-governance-table .ant-spin-nested-loading,

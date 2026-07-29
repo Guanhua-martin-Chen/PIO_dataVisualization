@@ -42,6 +42,10 @@ import { useRouter } from "next/navigation";
 
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import ForecastCenterPanel from "./components/ForecastCenterPanel";
+import ExceptionsPanel from "./components/ExceptionsPanel";
+import ForecastWorkspace from "./components/ForecastWorkspace";
+import InventoryPlanningPanel from "./components/InventoryPlanningPanel";
+import OutputCenterPanel from "./components/OutputCenterPanel";
 import { WorkspaceError, WorkspaceLoading } from "./components/WorkspaceState";
 import {
   AnalystPayload,
@@ -65,6 +69,7 @@ import {
 
 const { RangePicker } = DatePicker;
 const { Title, Paragraph, Text } = Typography;
+const LEGACY_FORECAST_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_LEGACY_FORECAST_UI === "true";
 
 type InventorySource = {
   part: string;
@@ -153,9 +158,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [forecastData, setForecastData] = useState<ForecastPayload | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastView, setForecastView] = useState("hierarchy");
-  const [forecastSubTab, setForecastSubTab] = useState("anomaly");
+  const [forecastSubTab, setForecastSubTab] = useState("forecast");
   const [hierarchicalForecast] = useState<HierarchicalForecastPayload | null>(null);
   const [forecastCenterData, setForecastCenterData] = useState<ForecastCenterPayload | null>(null);
+  const [inventoryPlanningData, setInventoryPlanningData] = useState<ForecastCenterPayload | null>(null);
+  const [inventoryPlanningLoading, setInventoryPlanningLoading] = useState(false);
   const [hierarchicalForecastLoading, setHierarchicalForecastLoading] = useState(false);
   const [forecastMetric, setForecastMetric] = useState<"revenue" | "quantity" | "wholesale_quantity">("revenue");
   const [hierarchyLevel, setHierarchyLevel] = useState<"brand" | "model" | "plc" | "model_plc">("brand");
@@ -188,6 +195,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [pivotDragField, setPivotDragField] = useState<string | null>(null);
   const legacyForecastRequest = useRef<AbortController | null>(null);
   const forecastCenterRequest = useRef<AbortController | null>(null);
+  const inventoryPlanningRequest = useRef<AbortController | null>(null);
   const anomalyRequest = useRef<AbortController | null>(null);
   const pivotFilterKey = JSON.stringify({
     search: tableState.search,
@@ -202,6 +210,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   function resolveForecastSheetName(fallback: string) {
     const sheetNames = workbook?.sheetNames ?? workspace?.workbook.sheetNames ?? [];
     return sheetNames.find((name) => name.trim().toLowerCase() === "pio_sales_data") ?? fallback;
+  }
+
+  function isEdaReferenceSheet(sheetName: string) {
+    const normalized = sheetName.trim().toLowerCase().replaceAll(" ", "_");
+    return normalized === "working_days" || normalized === "plc_legend";
   }
 
   // Save custom column order to localStorage on change
@@ -223,6 +236,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   useEffect(() => () => {
     legacyForecastRequest.current?.abort();
     forecastCenterRequest.current?.abort();
+    inventoryPlanningRequest.current?.abort();
     anomalyRequest.current?.abort();
   }, []);
 
@@ -338,6 +352,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           setAnomalyData(null);
           setForecastData(null);
           setForecastCenterData(null);
+          setInventoryPlanningData(null);
         }
         // Load custom column order from localStorage if available
         const cacheKey = `col_order_${id}_${payload.sheetName}`;
@@ -398,7 +413,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       page: 1,
     };
     setTableState(nextState);
-    loadWorkspaceData(workspace.sheetName, nextState, false, dataSubTab === "eda");
+    loadWorkspaceData(
+      workspace.sheetName,
+      nextState,
+      false,
+      dataSubTab === "eda" && !isEdaReferenceSheet(workspace.sheetName),
+    );
   }
 
   async function loadChartData(sheetName: string, state: TableState) {
@@ -529,8 +549,63 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     }
   }
 
+  async function loadInventoryPlanningData(sheetName: string, state: TableState, horizon = forecastHorizon) {
+    const governedForecastSheet = resolveForecastSheetName(sheetName);
+    const planningState = {
+      ...state,
+      search: "",
+      brand: state.brand.filter((brand) => ["HMA", "GMA", "KUS"].includes(brand)),
+      modelYear: [],
+      part: [],
+      page: 1,
+    };
+    const params = buildWorkspaceParams(planningState);
+    params.set("level", "model_plc");
+    params.set("metric", "quantity");
+    params.set("horizon", String(horizon));
+    params.set("use_working_days", String(useWorkingDays));
+    params.set("use_seasonality", String(useSeasonality));
+    params.set("tariff_impact_pct", String(tariffImpactPct));
+    params.set("model_strategy", hierarchyModelStrategy === "reference_portfolio" ? "auto" : hierarchyModelStrategy);
+    params.set("min_monthly_volume", String(minimumMonthlyVolume));
+    params.set("top_n", "10");
+
+    inventoryPlanningRequest.current?.abort();
+    const controller = new AbortController();
+    inventoryPlanningRequest.current = controller;
+    setInventoryPlanningData(null);
+    setInventoryPlanningLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (!response.ok) {
+        throw new Error((await response.json()).detail ?? "Failed to load the governed inventory planning preview.");
+      }
+      const payload = (await response.json()) as ForecastCenterPayload;
+      if (controller.signal.aborted) return;
+      setInventoryPlanningData(payload);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      messageApi.error(err instanceof Error ? err.message : "Failed to load the governed inventory planning preview.");
+    } finally {
+      if (inventoryPlanningRequest.current === controller) {
+        inventoryPlanningRequest.current = null;
+        setInventoryPlanningLoading(false);
+      }
+    }
+  }
+
   async function loadAnomalyData(sheetName: string, state: TableState) {
-    const params = buildWorkspaceParams({ ...state, page: 1 });
+    const governedForecastSheet = resolveForecastSheetName(sheetName);
+    const params = buildWorkspaceParams({
+      ...state,
+      search: "",
+      modelYear: [],
+      part: [],
+      page: 1,
+    });
     anomalyRequest.current?.abort();
     const controller = new AbortController();
     anomalyRequest.current = controller;
@@ -538,7 +613,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     setAnomalyLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/anomaly-center?${params.toString()}`,
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/anomaly-center?${params.toString()}`,
         { signal: controller.signal },
       );
       if (!response.ok) {
@@ -818,13 +893,20 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function syncAnomalyFromTable() {
     if (!workspace) return;
-    loadAnomalyData(workspace.sheetName, tableState);
-    messageApi.success("Anomaly Center refreshed with current Data Table filters");
+    const compatibleState = {
+      ...tableState,
+      search: "",
+      modelYear: [],
+      part: [],
+      page: 1,
+    };
+    loadAnomalyData(resolveForecastSheetName(workspace.sheetName), compatibleState);
+    messageApi.success("Exceptions refreshed from governed PIO data with compatible Brand, Model, and date filters");
   }
 
   function handleDataSubTabChange(key: string) {
     setDataSubTab(key);
-    if (key === "eda" && workspace && !workspace.edaDashboard) {
+    if (key === "eda" && workspace && !workspace.edaDashboard && !isEdaReferenceSheet(workspace.sheetName)) {
       loadWorkspaceData(workspace.sheetName, tableState, true, true);
     }
     if (key === "monthly-facts" && workspace) {
@@ -834,37 +916,27 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function loadForecastSurface(key: string) {
     if (!workspace) return;
-    if (key === "anomaly") {
+    if (key === "exceptions") {
       if (!anomalyRequest.current) {
-        loadAnomalyData(workspace.sheetName, tableState);
+        loadAnomalyData(resolveForecastSheetName(workspace.sheetName), forecastFilterState);
       }
       return;
     }
     if (key === "forecast") {
-      if (forecastView === "hierarchy") {
-        if (!forecastCenterRequest.current) {
-          loadHierarchicalForecast(
-            resolveForecastSheetName(workspace.sheetName),
-            forecastFilterState,
-            hierarchyLevel,
-            forecastMetric,
-          );
-        }
-      } else if (!legacyForecastRequest.current) {
-        loadForecastData(
+      if (!forecastCenterRequest.current) {
+        loadHierarchicalForecast(
           resolveForecastSheetName(workspace.sheetName),
           forecastFilterState,
-          forecastPart,
-          forecastHorizon,
+          hierarchyLevel,
+          forecastMetric,
         );
       }
       return;
     }
-    if (key === "inventory" && !legacyForecastRequest.current) {
-      loadForecastData(
+    if (key === "inventory" && !inventoryPlanningRequest.current) {
+      loadInventoryPlanningData(
         resolveForecastSheetName(workspace.sheetName),
         forecastFilterState,
-        forecastPart,
         forecastHorizon,
       );
     }
@@ -873,15 +945,19 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   function cancelForecastSurfaceRequests() {
     const legacyController = legacyForecastRequest.current;
     const forecastCenterController = forecastCenterRequest.current;
+    const inventoryController = inventoryPlanningRequest.current;
     const anomalyController = anomalyRequest.current;
     legacyForecastRequest.current = null;
     forecastCenterRequest.current = null;
+    inventoryPlanningRequest.current = null;
     anomalyRequest.current = null;
     legacyController?.abort();
     forecastCenterController?.abort();
+    inventoryController?.abort();
     anomalyController?.abort();
     setForecastLoading(false);
     setHierarchicalForecastLoading(false);
+    setInventoryPlanningLoading(false);
     setAnomalyLoading(false);
   }
 
@@ -952,7 +1028,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       sortOrder: resolvedSorter?.order ?? "",
     };
     if (workspace) {
-      loadWorkspaceData(workspace.sheetName, nextState, false, dataSubTab === "eda");
+      loadWorkspaceData(
+        workspace.sheetName,
+        nextState,
+        false,
+        dataSubTab === "eda" && !isEdaReferenceSheet(workspace.sheetName),
+      );
     }
   }
 
@@ -1125,7 +1206,124 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     );
   }
 
+  function renderGovernedForecasting() {
+    if (!workspace) return null;
+    return (
+      <div className="major-tab-stack">
+        <Card className="content-card major-tab-intro">
+          <div className="major-tab-header">
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Forecasting</div>
+              <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
+                One governed forecast entry, a distinct experimental exception review, an inventory-demand preview,
+                and one centralized output hub.
+              </Paragraph>
+            </div>
+            <Tag color="blue">Source: PIO_Sales_Data + all compatible Wholesale sheets</Tag>
+          </div>
+        </Card>
+        <Tabs
+          className="workspace-subtabs"
+          activeKey={forecastSubTab}
+          onChange={handleForecastSubTabChange}
+          items={[
+            {
+              key: "forecast",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Forecast</strong>
+                  <small>Governed plan</small>
+                </span>
+              ),
+              children: (
+                <ForecastWorkspace
+                  filters={forecastFilterState}
+                  filterOptions={governedForecastFilterOptions ?? null}
+                  horizon={forecastHorizon}
+                  onApplyFilters={applyForecastFilters}
+                  onResetFilters={resetForecastFilters}
+                  onSyncFilters={syncForecastFromTable}
+                  onHorizonChange={(value) => {
+                    setForecastHorizon(value);
+                    loadHierarchicalForecast(
+                      workspace.sheetName,
+                      forecastFilterState,
+                      hierarchyLevel,
+                      forecastMetric,
+                      value,
+                    );
+                  }}
+                >
+                  {renderForecastCenterPanel()}
+                </ForecastWorkspace>
+              ),
+            },
+            {
+              key: "exceptions",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Exceptions</strong>
+                  <small>Review queue</small>
+                </span>
+              ),
+              children: (
+                <ExceptionsPanel
+                  data={anomalyData}
+                  loading={anomalyLoading}
+                  onRefresh={() => loadAnomalyData(workspace.sheetName, forecastFilterState)}
+                />
+              ),
+            },
+            {
+              key: "inventory",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Inventory Planning</strong>
+                  <small>Experimental</small>
+                </span>
+              ),
+              children: (
+                <InventoryPlanningPanel
+                  data={inventoryPlanningData}
+                  loading={inventoryPlanningLoading}
+                  onRefresh={() => loadInventoryPlanningData(workspace.sheetName, forecastFilterState)}
+                />
+              ),
+            },
+            {
+              key: "output",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Output Center</strong>
+                  <small>Downloads</small>
+                </span>
+              ),
+              children: (
+                <OutputCenterPanel
+                  onExportCsv={exportForecastCenterCsv}
+                  onExportXlsx={exportForecastCenterXlsx}
+                />
+              ),
+            },
+          ]}
+        />
+      </div>
+    );
+  }
+
   function renderEdaDashboard() {
+    if (workspace && isEdaReferenceSheet(workspace.sheetName)) {
+      return (
+        <Card className="content-card">
+          <Alert
+            type="info"
+            showIcon
+            message="reference sheet — excluded from governed EDA"
+            description="Working_Days and PLC_Legend support calendar or classification logic; they are not historical sales facts."
+          />
+        </Card>
+      );
+    }
     const eda = workspace?.edaDashboard;
     if (!eda) {
       return (
@@ -2768,7 +2966,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     </span>
                   </div>
                 ),
-                children: (
+                children: LEGACY_FORECAST_UI_ENABLED ? (
                   <div className="major-tab-stack">
                     <Card className="content-card major-tab-intro">
                       <div className="major-tab-header">
@@ -4240,7 +4438,7 @@ final_forecast = max(0, y_hat * max(0, 1 + tariff_pct/100))`}</pre>
                       ]}
                     />
                   </div>
-                ),
+                ) : renderGovernedForecasting(),
               },
               {
                 key: "agent",
