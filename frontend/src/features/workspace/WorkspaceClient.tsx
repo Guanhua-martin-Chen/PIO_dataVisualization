@@ -1229,7 +1229,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           items={[
             {
               key: "forecast",
-              label: "Forecast",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Forecast</strong>
+                  <small>Governed plan</small>
+                </span>
+              ),
               children: (
                 <ForecastWorkspace
                   filters={forecastFilterState}
@@ -1255,7 +1260,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             },
             {
               key: "exceptions",
-              label: "Exceptions",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Exceptions</strong>
+                  <small>Review queue</small>
+                </span>
+              ),
               children: (
                 <ExceptionsPanel
                   data={anomalyData}
@@ -1266,7 +1276,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             },
             {
               key: "inventory",
-              label: "Inventory Planning",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Inventory Planning</strong>
+                  <small>Experimental</small>
+                </span>
+              ),
               children: (
                 <InventoryPlanningPanel
                   data={inventoryPlanningData}
@@ -1277,7 +1292,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             },
             {
               key: "output",
-              label: "Output Center",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Output Center</strong>
+                  <small>Downloads</small>
+                </span>
+              ),
               children: (
                 <OutputCenterPanel
                   onExportCsv={exportForecastCenterCsv}
