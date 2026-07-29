@@ -16,6 +16,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 
@@ -26,6 +27,21 @@ const { Paragraph } = Typography;
 
 export type ForecastMetric = "revenue" | "quantity" | "wholesale_quantity";
 export type ForecastLevel = "brand" | "model" | "plc" | "model_plc";
+
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  auto: "Auto model selection",
+  baseline_auto: "Statistical baseline selection",
+  reference_portfolio: "Validated reference portfolio",
+  ets_additive: "Additive ETS",
+  naive_last: "Naive last value",
+  working_day_adjusted_seasonal: "Working-day-adjusted seasonal",
+  reconciled_allocation: "Reconciled parent allocation",
+  new_model_proxy: "New / reintroduced model proxy",
+  excluded: "Excluded by lifecycle or volume policy",
+  planner_review_residual: "Planner-review residual",
+  hw_add_add__heuristic__bias_on__log1p__rolling_24__robust_winsorized:
+    "Optimized additive Holt-Winters (robust 24-month log model)",
+};
 
 type ForecastCenterPanelProps = {
   data: ForecastCenterPayload | null;
@@ -49,6 +65,32 @@ type ForecastCenterPanelProps = {
   onExportXlsx: () => void;
 };
 
+function modelDisplayName(modelId: string | null | undefined) {
+  if (!modelId) return "N/A";
+  return MODEL_DISPLAY_NAMES[modelId] ?? modelId.replaceAll("_", " ");
+}
+
+function ModelIdentity({ modelId }: { modelId: string | null | undefined }) {
+  if (!modelId) return <>N/A</>;
+  return (
+    <Tooltip title={`Technical ID: ${modelId}`} placement="topLeft">
+      <span
+        className="forecast-model-name"
+        tabIndex={0}
+        aria-label={`${modelDisplayName(modelId)}. Technical ID: ${modelId}`}
+      >
+        {modelDisplayName(modelId)}
+      </span>
+    </Tooltip>
+  );
+}
+
+function metricResultTitle(metric: ForecastMetric) {
+  if (metric === "revenue") return "Next forecast revenue (USD)";
+  if (metric === "quantity") return "Next forecast installation quantity (accessory units)";
+  return "Next forecast wholesale volume (vehicles)";
+}
+
 function formatValue(value: number, metric: ForecastMetric) {
   if (metric === "revenue") {
     return new Intl.NumberFormat("en-US", {
@@ -57,7 +99,8 @@ function formatValue(value: number, metric: ForecastMetric) {
       maximumFractionDigits: 0,
     }).format(value);
   }
-  return formatMetric(value);
+  const unit = metric === "quantity" ? "accessory units" : "vehicles";
+  return `${formatMetric(value)} ${unit}`;
 }
 
 function forecastText(record: ForecastCenterRecord, metric: ForecastMetric) {
@@ -101,7 +144,7 @@ export default function ForecastCenterPanel({
 
   return (
     <Spin spinning={loading}>
-      <div className="tab-stack">
+      <div className="tab-stack forecast-center-panel">
         <Card
           className="content-card"
           title="Forecast Center controls"
@@ -202,8 +245,13 @@ export default function ForecastCenterPanel({
                 <div className="summary-row"><span className="summary-dot" /><span>{data.summary.accuracyScope.childPolicy}</span></div>
               </div>
               <div className="health-grid" style={{ marginTop: 16 }}>
-                <div><span className="health-label">Requested Strategy</span><strong>{data.summary.modelGovernance.requestedStrategy}</strong></div>
-                <div><span className="health-label">Source hash</span><strong>{data.summary.modelGovernance.sourceHash}</strong></div>
+                <div><span className="health-label">Requested Strategy</span><strong><ModelIdentity modelId={data.summary.modelGovernance.requestedStrategy} /></strong></div>
+                <div>
+                  <span className="health-label">Source hash</span>
+                  <Tooltip title={data.summary.modelGovernance.sourceHash} placement="topLeft">
+                    <strong className="forecast-technical-value" tabIndex={0}>{data.summary.modelGovernance.sourceHash}</strong>
+                  </Tooltip>
+                </div>
                 <div><span className="health-label">Training cutoff</span><strong>{data.summary.modelGovernance.trainingCutoff}</strong></div>
                 <div><span className="health-label">Backtest horizons</span><strong>{data.summary.modelGovernance.backtestHorizons.join(", ")}</strong></div>
                 <div><span className="health-label">Fold count</span><strong>{data.summary.modelGovernance.foldCount ?? "Not validated for this source"}</strong></div>
@@ -212,17 +260,42 @@ export default function ForecastCenterPanel({
                 <div><span className="health-label">Reference status</span><strong>{data.summary.modelGovernance.referenceMethodStatus}</strong></div>
               </div>
               <Table
+                className="forecast-governance-table"
                 style={{ marginTop: 16 }}
                 size="small"
                 pagination={false}
                 rowKey="brand"
                 dataSource={data.brandRecords}
                 columns={[
-                  { title: "Official anchor", dataIndex: "brand", key: "brand" },
-                  { title: "Requested strategy", dataIndex: "requestedModelStrategy", key: "requestedModelStrategy" },
-                  { title: "Brand-specific method", dataIndex: "brandSpecificMethod", key: "brandSpecificMethod" },
-                  { title: "Selected model", dataIndex: "selectedModel", key: "selectedModel" },
-                  { title: "Backtest model", dataIndex: "backtestModel", key: "backtestModel" },
+                  { title: "Official anchor", dataIndex: "brand", key: "brand", width: 120 },
+                  {
+                    title: "Requested strategy",
+                    dataIndex: "requestedModelStrategy",
+                    key: "requestedModelStrategy",
+                    width: 190,
+                    render: (value: string) => <ModelIdentity modelId={value} />,
+                  },
+                  {
+                    title: "Brand-specific method",
+                    dataIndex: "brandSpecificMethod",
+                    key: "brandSpecificMethod",
+                    width: 240,
+                    render: (value: string) => <ModelIdentity modelId={value} />,
+                  },
+                  {
+                    title: "Selected model",
+                    dataIndex: "selectedModel",
+                    key: "selectedModel",
+                    width: 240,
+                    render: (value: string) => <ModelIdentity modelId={value} />,
+                  },
+                  {
+                    title: "Backtest model",
+                    dataIndex: "backtestModel",
+                    key: "backtestModel",
+                    width: 240,
+                    render: (value: string) => <ModelIdentity modelId={value} />,
+                  },
                   { title: "History months", dataIndex: "historyMonths", key: "historyMonths", align: "right" as const },
                   { title: "Independent test points", dataIndex: "backtestPoints", key: "backtestPoints", align: "right" as const },
                   {
@@ -240,13 +313,14 @@ export default function ForecastCenterPanel({
                     render: (value: number | null) => value === null || value === undefined ? "N/A" : `${value.toFixed(2)}%`,
                   },
                 ]}
+                scroll={{ x: 1450 }}
               />
               {hmaAnchor && hmaAnchor.wape !== null && hmaAnchor.wape !== undefined && hmaAnchor.wape >= 0.10 ? (
                 <Alert
                   style={{ marginTop: 16 }}
                   type="warning"
                   showIcon
-                  message={`HMA anchor diagnostic: ${hmaAnchor.selectedModel} did not follow recent HMA level/mix changes closely enough`}
+                  message={`HMA anchor diagnostic: ${modelDisplayName(hmaAnchor.selectedModel)} did not follow recent HMA level/mix changes closely enough`}
                   description="This is a brand-anchor time-series error, not a Model/PLC reconciliation failure. A shorter history window may adapt faster, but it also weakens annual seasonality evidence and reduces independent test points."
                 />
               ) : null}
@@ -343,20 +417,50 @@ export default function ForecastCenterPanel({
                   { title: "Model", dataIndex: "modelName", key: "modelName", render: (value: string) => value || "All models" },
                   { title: "PLC", dataIndex: "plc", key: "plc", render: (value: string) => value || "All PLCs" },
                   { title: "Route", dataIndex: "allocationRoute", key: "allocationRoute", render: (value: string) => value || "Official anchor" },
-                  { title: "Method", dataIndex: "selectedModel", key: "selectedModel" },
                   {
-                    title: "Expected unit revenue",
-                    dataIndex: "expectedUnitRevenue",
-                    key: "expectedUnitRevenue",
-                    align: "right" as const,
-                    render: (value: number | null) => value ? formatValue(value, "revenue") : "—",
+                    title: "Method",
+                    dataIndex: "selectedModel",
+                    key: "selectedModel",
+                    width: 220,
+                    render: (value: string) => <ModelIdentity modelId={value} />,
                   },
                   {
-                    title: "Next result",
+                    title: "Expected unit price (USD per installed accessory unit)",
+                    dataIndex: "expectedUnitRevenue",
+                    key: "expectedUnitRevenue",
+                    hidden: metric !== "revenue",
+                    width: 220,
+                    align: "right" as const,
+                    render: (value: number | null | undefined) =>
+                      value === null || value === undefined ? "—" : formatValue(value, "revenue"),
+                  },
+                  {
+                    title: metricResultTitle(metric),
                     dataIndex: "nextForecast",
                     key: "nextForecast",
+                    width: 220,
                     align: "right" as const,
                     render: (value: number) => formatValue(value, metric),
+                  },
+                  {
+                    title: "Planning explanation",
+                    key: "forecastExplanation",
+                    width: 320,
+                    render: (_: unknown, record: ForecastCenterRecord) => {
+                      const hasExplicitReason =
+                        record.forecastEligible === false ||
+                        record.allocationRoute?.startsWith("excluded_") ||
+                        record.allocationRoute === "planner_review_residual" ||
+                        record.allocationRoute === "new_model_proxy";
+                      if (!hasExplicitReason) return "—";
+                      if (!record.selectionNote && !record.allocationRoute && !record.lifecycleStatus) return "—";
+                      return (
+                        <div className="forecast-explanation">
+                          {record.lifecycleStatus ? <Tag>{record.lifecycleStatus}</Tag> : null}
+                          <span>{record.selectionNote || record.allocationRoute}</span>
+                        </div>
+                      );
+                    },
                   },
                   {
                     title: "Brand-anchor WAPE",
@@ -372,7 +476,7 @@ export default function ForecastCenterPanel({
                     render: (_: unknown, record: ForecastCenterRecord) => forecastText(record, metric),
                   },
                 ]}
-                scroll={{ x: 1350 }}
+                scroll={{ x: 1800 }}
               />
             </Card>
           </>
