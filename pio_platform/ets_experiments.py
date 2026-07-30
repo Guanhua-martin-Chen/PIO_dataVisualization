@@ -79,10 +79,24 @@ VALIDATED_HMA_REVENUE_SPEC = EtsCandidateSpec(
 
 VALIDATED_REFERENCE_PORTFOLIO: dict[str, Any] = {
     "contractVersion": "pio-backtest-v1",
-    "sourceHash": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
+    "sourceHash": "9ff30f6bf08f9b631042f74e8a345d36cb7e4b46981f6acbf9169279851b54b9",
+    "specificationSourceHash": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
     "trainingCutoff": "2026-06",
     "backtestHorizons": [1, 2, 3],
     "foldCount": 51,
+    "evaluationEvidence": {
+        "completedMonthStart": "2023-01",
+        "completedMonthCount": 42,
+        "minimumTrainingMonths": 24,
+        "expectedFoldCounts": {"1": 18, "2": 17, "3": 16, "combined": 51},
+        "foldKeyCount": 51,
+        "foldKeyIdentityAlgorithm": "sha256_canonical_json_origin_target_horizon",
+        "foldKeyIdentity": "24b37756a9e14b9dc693459ccefafdd03f52daa595904c5365a6348ae13a156d",
+        "predictionCoverage": 1.0,
+        "fullCoverage": True,
+        "aggregation": "Official Total",
+        "target": "pio_revenue",
+    },
     "wapeScope": "official total after summing HMA/GMA/KUS on common origin-horizon rows",
     "implementationStatus": "validated_implementation",
     "officialTotal": {
@@ -354,7 +368,7 @@ def audit_candidate_result(
 def select_ets_champion(
     candidate_results: Sequence[dict[str, Any]],
     *,
-    tie_band_wape: float = 0.01,
+    tie_band_wape: float = 0.005,
 ) -> dict[str, Any]:
     eligible = [
         item

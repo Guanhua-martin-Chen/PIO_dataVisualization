@@ -62,7 +62,47 @@ class ModelEntityTests(unittest.TestCase):
         self.assertEqual(by_name["Accent"]["lastPositiveMonth"], "2023-02")
         self.assertTrue(by_name["Stinger"]["reintroduced"])
         self.assertEqual(by_name["Stinger"]["reintroducedMonth"], "2025-07")
-        self.assertEqual(by_name["Sonata"]["statusCode"], "active")
+        self.assertEqual(by_name["Sonata"]["statusCode"], "new")
+        self.assertEqual(by_name["Sonata"]["status"], "New / limited history")
+
+    def test_models_without_current_year_activity_are_inactive_after_six_observed_months(self) -> None:
+        df = pd.DataFrame(
+            {
+                "Brand": ["H", "H", "K", "K", "H"],
+                "Model": ["Nexo", "Nexo", "Stinger", "Stinger", "Elantra"],
+                "Code": ["FE", "FE", "C", "C", "AD"],
+                "Qty": [8, 6, 5, 8, 20],
+            }
+        )
+        dates = pd.Series(
+            pd.to_datetime(
+                [
+                    "2023-01-01",
+                    "2025-10-01",
+                    "2023-01-01",
+                    "2025-07-01",
+                    "2026-07-01",
+                ]
+            )
+        )
+
+        payload = build_model_lifecycle(
+            df,
+            dates,
+            model_col="Model",
+            qty_col="Qty",
+            brand_col="Brand",
+            model_code_col="Code",
+            cutoff_year=2024,
+            reintroduction_gap_months=12,
+        )
+        by_name = {item["modelName"]: item for item in payload["records"]}
+
+        self.assertEqual(by_name["Nexo"]["statusCode"], "inactive")
+        self.assertTrue(by_name["Nexo"]["inactiveBeforeCurrentYear"])
+        self.assertEqual(by_name["Stinger"]["statusCode"], "inactive")
+        self.assertTrue(by_name["Stinger"]["reintroduced"])
+        self.assertEqual(by_name["Elantra"]["statusCode"], "new")
 
 
 if __name__ == "__main__":

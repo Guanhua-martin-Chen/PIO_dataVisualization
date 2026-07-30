@@ -19,7 +19,7 @@ class BacktestContract:
     version: str = CONTRACT_VERSION
     minimum_training_months: int = 24
     horizons: tuple[int, ...] = (1, 2, 3)
-    tie_band_wape: float = 0.01
+    tie_band_wape: float = 0.005
     primary_metric: str = "wape"
     fold_type: str = "expanding_rolling_origin"
 
@@ -40,11 +40,12 @@ class FoldPrediction:
     target_month: str
     horizon: int
     actual: float
-    prediction: float
+    prediction: float | None
     backtest_model: str
     training_months: int
     source_hash: str = ""
     contract_version: str = CONTRACT_VERSION
+    error: str | None = None
 
 
 Predictor = Callable[
@@ -183,13 +184,20 @@ def run_series_backtest(
             target_position = training_end + horizon - 1
             if target_position >= len(monthly):
                 continue
-            prediction, selected_model = model_predictor(
-                history,
-                horizon,
-                training_month_index,
-                possible_targets,
-                working_days,
-            )
+            error: str | None = None
+            try:
+                prediction, selected_model = model_predictor(
+                    history,
+                    horizon,
+                    training_month_index,
+                    possible_targets,
+                    working_days,
+                )
+                prediction = max(float(prediction), 0.0)
+            except Exception as exc:
+                prediction = None
+                selected_model = model_id
+                error = f"{type(exc).__name__}: {exc}"
             records.append(
                 FoldPrediction(
                     model_id=model_id,
@@ -200,11 +208,12 @@ def run_series_backtest(
                     target_month=str(monthly.index[target_position]),
                     horizon=horizon,
                     actual=float(monthly.iloc[target_position]),
-                    prediction=max(float(prediction), 0.0),
+                    prediction=prediction,
                     backtest_model=selected_model,
                     training_months=training_end,
                     source_hash=source_hash,
                     contract_version=active_contract.version,
+                    error=error,
                 )
             )
     return records
@@ -249,6 +258,12 @@ def run_portfolio_backtest(
         )
 
     entity_frame = predictions_to_frame(entity_rows)
+    expected = expected_fold_counts(
+        int(entity_frame["training_months"].max()) + 1
+        if not entity_frame.empty
+        else 0,
+        active_contract,
+    )
     if entity_frame.empty:
         return {
             "contract": asdict(active_contract),
@@ -256,6 +271,11 @@ def run_portfolio_backtest(
             "target": target,
             "entityMetrics": {},
             "officialTotalMetrics": summarize_predictions(entity_frame),
+            "foldAudit": audit_fold_coverage(
+                entity_frame,
+                expected_entities=set(map(str, entity_models)),
+                expected_horizon_counts=expected,
+            ),
             "predictions": [],
         }
 
@@ -266,7 +286,15 @@ def run_portfolio_backtest(
     common = entity_frame.set_index(fold_keys).loc[common_keys].reset_index()
     total = (
         common.groupby(fold_keys, as_index=False)
-        .agg(actual=("actual", "sum"), prediction=("prediction", "sum"))
+        .agg(
+            actual=("actual", "sum"),
+            prediction=("prediction", lambda values: values.sum(min_count=len(expected_entities))),
+        )
+    )
+    fold_audit = audit_fold_coverage(
+        entity_frame,
+        expected_entities=expected_entities,
+        expected_horizon_counts=expected,
     )
 
     entity_metrics = {
@@ -279,6 +307,8 @@ def run_portfolio_backtest(
         "target": target,
         "entityMetrics": entity_metrics,
         "officialTotalMetrics": summarize_predictions(total),
+        "foldAudit": fold_audit,
+        "fullCoverageEligible": fold_audit["status"] == "pass",
         "predictions": entity_frame.to_dict(orient="records"),
     }
 
@@ -380,7 +410,7 @@ def summarize_predictions(frame: pd.DataFrame) -> dict[str, Any]:
 def select_champion(
     candidates: Mapping[str, Mapping[str, Any]],
     *,
-    tie_band_wape: float = 0.01,
+    tie_band_wape: float = 0.005,
     complexity: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """Apply the governed WAPE/bias/stability/complexity selection rule."""
@@ -441,6 +471,192 @@ def expected_fold_counts(
     }
     counts["combined"] = sum(counts.values())
     return counts
+
+
+def audit_fold_coverage(
+    frame: pd.DataFrame,
+    *,
+    expected_entities: set[str] | None = None,
+    expected_horizon_counts: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """Audit exact fold keys and prediction coverage without dropping failures."""
+
+    required = {"origin_month", "target_month", "horizon"}
+    violations: list[str] = []
+    if frame.empty:
+        expected_total = int((expected_horizon_counts or {}).get("combined", 0))
+        if expected_total:
+            violations.append(f"expected {expected_total} folds but received none")
+        return {
+            "status": "fail" if violations else "pass",
+            "violations": violations,
+            "expectedHorizonCounts": dict(expected_horizon_counts or {}),
+            "observedHorizonCounts": {},
+            "foldKeyCount": 0,
+            "missingPredictionCount": 0,
+            "coverage": 0.0,
+        }
+    missing_columns = required - set(frame.columns)
+    if missing_columns:
+        return {
+            "status": "fail",
+            "violations": [f"missing fold columns: {sorted(missing_columns)}"],
+            "expectedHorizonCounts": dict(expected_horizon_counts or {}),
+            "observedHorizonCounts": {},
+            "foldKeyCount": 0,
+            "missingPredictionCount": int(len(frame)),
+            "coverage": 0.0,
+        }
+
+    key_columns = ["origin_month", "target_month", "horizon"]
+    duplicate_columns = key_columns + (["entity"] if "entity" in frame.columns else [])
+    duplicates = frame.duplicated(duplicate_columns, keep=False)
+    if duplicates.any():
+        violations.append(f"duplicate fold rows: {int(duplicates.sum())}")
+
+    observed = {
+        str(int(horizon)): int(
+            frame.loc[frame["horizon"].astype(int) == int(horizon), key_columns]
+            .drop_duplicates()
+            .shape[0]
+        )
+        for horizon in sorted(frame["horizon"].dropna().astype(int).unique())
+    }
+    observed["combined"] = int(frame[key_columns].drop_duplicates().shape[0])
+    for horizon, expected_count in (expected_horizon_counts or {}).items():
+        if int(observed.get(str(horizon), 0)) != int(expected_count):
+            violations.append(
+                f"horizon {horizon} expected {int(expected_count)} fold keys; "
+                f"observed {int(observed.get(str(horizon), 0))}"
+            )
+
+    if expected_entities and "entity" in frame.columns:
+        expected = {str(item) for item in expected_entities}
+        for key, group in frame.groupby(key_columns, dropna=False):
+            observed_entities = set(group["entity"].astype(str))
+            if observed_entities != expected:
+                violations.append(
+                    f"fold {tuple(key) if isinstance(key, tuple) else key} entities "
+                    f"{sorted(observed_entities)} != {sorted(expected)}"
+                )
+
+    missing_predictions = (
+        int(pd.to_numeric(frame["prediction"], errors="coerce").isna().sum())
+        if "prediction" in frame.columns
+        else int(len(frame))
+    )
+    if missing_predictions:
+        violations.append(f"missing predictions retained: {missing_predictions}")
+    expected_rows = len(frame)
+    coverage = (
+        float((expected_rows - missing_predictions) / expected_rows)
+        if expected_rows
+        else 0.0
+    )
+    return {
+        "status": "pass" if not violations else "fail",
+        "violations": violations,
+        "expectedHorizonCounts": dict(expected_horizon_counts or {}),
+        "observedHorizonCounts": observed,
+        "foldKeyCount": observed["combined"],
+        "missingPredictionCount": missing_predictions,
+        "coverage": coverage,
+    }
+
+
+def calibrate_held_out_intervals(
+    points: Sequence[Mapping[str, Any]],
+    calibration_rows: Sequence[Mapping[str, Any]],
+    *,
+    nominal_coverage: float = 0.90,
+    calibration_scope_id: str,
+    validation_status: str = "validated",
+    minimum_residuals: int = 5,
+) -> list[dict[str, Any]]:
+    """Create horizon-specific nonnegative intervals from prior held-out residuals.
+
+    Calibration rows are rolling-origin predictions. For each output row, only
+    residuals whose target month precedes the forecast month are eligible.
+    """
+
+    if not 0.0 < nominal_coverage < 1.0:
+        raise ValueError("nominal_coverage must be between 0 and 1")
+    prepared: list[dict[str, Any]] = []
+    for row in calibration_rows:
+        actual = pd.to_numeric(pd.Series([row.get("actual")]), errors="coerce").iloc[0]
+        prediction = pd.to_numeric(
+            pd.Series([row.get("prediction")]), errors="coerce"
+        ).iloc[0]
+        if pd.isna(actual) or pd.isna(prediction):
+            continue
+        prepared.append(
+            {
+                **dict(row),
+                "horizon": int(row.get("horizon", 1)),
+                "target_month": str(row.get("target_month", ""))[:7],
+                "absoluteResidual": abs(float(actual) - float(prediction)),
+                "covered": None,
+            }
+        )
+
+    output: list[dict[str, Any]] = []
+    for row in points:
+        point = max(float(row.get("point", row.get("value", 0.0))), 0.0)
+        horizon = int(row.get("horizon", 1))
+        forecast_month = str(row.get("forecastMonth", row.get("month", "")))[:7]
+        eligible = sorted(
+            [
+                item
+                for item in prepared
+                if item["horizon"] == horizon
+                and item["target_month"]
+                and item["target_month"] < forecast_month
+            ],
+            key=lambda item: (
+                str(item["target_month"]),
+                str(item.get("origin_month", "")),
+            ),
+        )
+        residuals = [float(item["absoluteResidual"]) for item in eligible]
+        radius = (
+            float(np.quantile(residuals, nominal_coverage, method="higher"))
+            if residuals
+            else 0.0
+        )
+        empirical_count = 0
+        empirical_hits = 0
+        for index, item in enumerate(eligible):
+            prior = eligible[:index]
+            if len(prior) < minimum_residuals:
+                continue
+            prequential_radius = float(
+                np.quantile(
+                    [float(value["absoluteResidual"]) for value in prior],
+                    nominal_coverage,
+                    method="higher",
+                )
+            )
+            empirical_count += 1
+            empirical_hits += int(float(item["absoluteResidual"]) <= prequential_radius)
+        sufficient = len(residuals) >= minimum_residuals
+        status = validation_status if sufficient else "unvalidated_insufficient_residuals"
+        output.append(
+            {
+                **dict(row),
+                "lower": max(0.0, point - radius),
+                "point": point,
+                "upper": max(point, point + radius),
+                "nominalCoverage": nominal_coverage,
+                "empiricalCoverage": (
+                    float(empirical_hits / empirical_count) if empirical_count else None
+                ),
+                "coverageSampleCount": empirical_count,
+                "calibrationResidualCount": len(residuals),
+                "calibrationScopeId": calibration_scope_id,
+                "validationStatus": status,
+            }
+        )
+    return output
 
 
 def self_test() -> dict[str, Any]:

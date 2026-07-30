@@ -1,11 +1,11 @@
 "use client";
 
+import { DownloadOutlined } from "@ant-design/icons";
 import {
   Alert,
   Button,
   Card,
   Col,
-  Collapse,
   Empty,
   Input,
   InputNumber,
@@ -62,7 +62,8 @@ type ForecastCenterPanelProps = {
   onMinMonthlyVolumeChange: (value: number) => void;
   onRun: () => void;
   onExportCsv: () => void;
-  onExportXlsx: () => void;
+  onExportXlsx?: () => void;
+  currentExportReady?: boolean;
 };
 
 function modelDisplayName(modelId: string | null | undefined) {
@@ -127,6 +128,8 @@ export default function ForecastCenterPanel({
   onTariffImpactChange,
   onMinMonthlyVolumeChange,
   onRun,
+  onExportCsv,
+  currentExportReady = true,
 }: ForecastCenterPanelProps) {
   const levelOptions = [
     { label: "Brand", value: "brand" },
@@ -146,9 +149,25 @@ export default function ForecastCenterPanel({
         <Card
           className="content-card"
           title="Forecast Center controls"
+          extra={(
+            <Space wrap>
+              <Tooltip title={currentExportReady ? "" : "Prepare a governed run in Output Center first."}>
+                <span>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    disabled={!currentExportReady}
+                    onClick={onExportCsv}
+                  >
+                    Current view CSV
+                  </Button>
+                </span>
+              </Tooltip>
+            </Space>
+          )}
         >
           <div className="toolbar-grid">
             <Select
+              aria-label="Forecast metric"
               value={metric}
               options={[
                 { label: "Revenue", value: "revenue" },
@@ -157,8 +176,9 @@ export default function ForecastCenterPanel({
               ]}
               onChange={onMetricChange}
             />
-            <Select value={level} options={levelOptions} onChange={onLevelChange} />
+            <Select aria-label="Forecast hierarchy level" value={level} options={levelOptions} onChange={onLevelChange} />
             <Select
+              aria-label="Forecast model strategy"
               value={modelStrategy}
               onChange={onModelStrategyChange}
               options={[
@@ -180,12 +200,14 @@ export default function ForecastCenterPanel({
               ]}
             />
             <Select
+              aria-label="Working Days factor"
               value={useWorkingDays}
               disabled={modelStrategy === "reference_portfolio"}
               options={[{ label: "Working Days on", value: true }, { label: "Working Days off", value: false }]}
               onChange={onWorkingDaysChange}
             />
             <Select
+              aria-label="Seasonality factor"
               value={useSeasonality}
               disabled={modelStrategy === "reference_portfolio"}
               options={[{ label: "Seasonality on", value: true }, { label: "Seasonality off", value: false }]}
@@ -193,6 +215,7 @@ export default function ForecastCenterPanel({
             />
             <Space.Compact block>
               <InputNumber
+                aria-label="Tariff demand impact percent"
                 min={-100}
                 max={100}
                 value={tariffImpactPct}
@@ -204,6 +227,7 @@ export default function ForecastCenterPanel({
             </Space.Compact>
             <Space.Compact block>
               <InputNumber
+                aria-label="Minimum average monthly quantity"
                 min={0}
                 value={minMonthlyVolume}
                 onChange={(value) => onMinMonthlyVolumeChange(Number(value ?? 0))}
@@ -211,11 +235,12 @@ export default function ForecastCenterPanel({
               />
               <Input value="min avg qty/month" readOnly style={{ width: 170 }} />
             </Space.Compact>
-            <Button type="primary" onClick={onRun}>Generate forecast</Button>
+            <Button aria-label="Generate governed forecast" type="primary" onClick={onRun}>Generate forecast</Button>
           </div>
           <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
             HMA, GMA, and KUS are the official forecast anchors. Model and PLC values reconcile exactly to the parent.
-            HMA, GMA, and KUS use dealer/non-fleet wholesale denominators under the current business rule; fleet is excluded.
+            Current runtime uses dealer/non-fleet wholesale. The approved KUS contract separates Wholesale and
+            Carpet Floor Mat Fleet baskets from June 2026; implementation and backtest are pending.
             IONIQ variants remain separate model entities.
           </Paragraph>
         </Card>
@@ -229,16 +254,7 @@ export default function ForecastCenterPanel({
               <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Hierarchy check" value={data.summary.reconciliation.status} /></Card></Col>
             </Row>
 
-            <Collapse
-              className="forecast-method-collapse"
-              defaultActiveKey={[]}
-              items={[
-                {
-                  key: "method-validation",
-                  label: "Method & Validation",
-                  children: (
-                    <div className="tab-stack">
-            <Card className="content-card" title="Accuracy scope and interpretation" variant="borderless">
+            <Card className="content-card" title="Accuracy scope and interpretation">
               <div className="summary-stack">
                 <div className="summary-row"><span className="summary-dot" /><span><strong>Target:</strong> {data.summary.accuracyScope.target}</span></div>
                 <div className="summary-row"><span className="summary-dot" /><span><strong>Evaluated grain:</strong> {data.summary.accuracyScope.evaluatedGrain}</span></div>
@@ -327,6 +343,158 @@ export default function ForecastCenterPanel({
               ) : null}
             </Card>
 
+            <section aria-label="Rolling-origin contract">
+              <Card className="content-card" title="Rolling-origin contract">
+                <Paragraph className="workspace-copy">
+                  H1 is one month ahead, H2 is two months ahead, and H3 is three months ahead.
+                  With 42 completed months and 24 months of minimum training, the governed contract
+                  has 18 H1, 17 H2, and 16 H3 Official Total common-origin rows (51 combined).
+                  The recent application H1 diagnostic contains Brand prediction rows and is not a
+                  same-scope ranking against the governed contract.
+                </Paragraph>
+                <div role="region" aria-label="Evaluation scope table">
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey="evaluationScopeId"
+                    dataSource={data.summary.evaluationScopes}
+                    columns={[
+                      { title: "Scope ID", dataIndex: "evaluationScopeId", key: "evaluationScopeId", width: 310 },
+                      { title: "Label", dataIndex: "label", key: "label", width: 220 },
+                      { title: "Horizons", dataIndex: "horizons", key: "horizons", render: (value: number[]) => value.join(", ") },
+                      { title: "Common origin rows", dataIndex: "commonOriginRows", key: "commonOriginRows", align: "right" as const, render: (value: number | null) => value ?? "Not validated" },
+                      { title: "Brand prediction rows", dataIndex: "brandPredictionRows", key: "brandPredictionRows", align: "right" as const, render: (value: number | null) => value ?? "Not validated" },
+                      { title: "Aggregation / coverage", key: "contract", render: (_: unknown, row) => `${row.aggregation}; ${row.coverage}` },
+                      { title: "Status", dataIndex: "validationStatus", key: "validationStatus" },
+                    ]}
+                    scroll={{ x: 1250 }}
+                  />
+                </div>
+              </Card>
+            </section>
+
+            <section aria-label="Fair model comparison">
+              <Card className="content-card" title="Fair model comparison">
+                <Alert
+                  type={data.summary.fairModelComparison.validationStatus.startsWith("validated") ? "success" : "warning"}
+                  showIcon
+                  message={data.summary.fairModelComparison.validationStatus}
+                  description={data.summary.fairModelComparison.disclosure || "Registered values are withheld because this request is not the complete governed scope."}
+                />
+                <div role="region" aria-label="Fair model comparison table" style={{ marginTop: 16 }}>
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey="modelId"
+                    dataSource={data.summary.fairModelComparison.rows}
+                    locale={{ emptyText: "No registered metrics are eligible for this request scope." }}
+                    columns={[
+                      { title: "Method", dataIndex: "label", key: "label", width: 260 },
+                      { title: "Comparison", dataIndex: "comparisonType", key: "comparisonType", width: 220 },
+                      { title: "HMA", dataIndex: "hmaMethod", key: "hmaMethod", width: 280, render: (value: string) => <ModelIdentity modelId={value} /> },
+                      { title: "GMA", dataIndex: "gmaMethod", key: "gmaMethod", render: (value: string) => <ModelIdentity modelId={value} /> },
+                      { title: "KUS", dataIndex: "kusMethod", key: "kusMethod", render: (value: string) => <ModelIdentity modelId={value} /> },
+                      { title: "Official Total WAPE", dataIndex: "officialTotalWape", key: "officialTotalWape", align: "right" as const, render: (value: number) => `${(value * 100).toFixed(2)}%` },
+                      { title: "Common folds", dataIndex: "foldCount", key: "foldCount", align: "right" as const },
+                    ]}
+                    scroll={{ x: 1350 }}
+                  />
+                </div>
+              </Card>
+            </section>
+
+            <section aria-label="Allocation accuracy">
+              <Card className="content-card" title="Allocation accuracy">
+                <Paragraph className="workspace-copy">
+                  Brand forecast error propagates to children; child share error is additional.
+                  These held-out diagnostics supply the actual parent total only to isolate allocation
+                  share error. They are allocationOnly, not end-to-end accuracy. Reconciliation PASS
+                  means the children sum to the parent; it does not measure allocation accuracy.
+                </Paragraph>
+                <div role="region" aria-label="Allocation accuracy table">
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey="level"
+                    dataSource={data.summary.allocationAccuracy}
+                    columns={[
+                      { title: "Level", dataIndex: "level", key: "level" },
+                      { title: "Scope", dataIndex: "scope", key: "scope" },
+                      { title: "Grain", dataIndex: "grain", key: "grain", width: 310 },
+                      { title: "WAPE", dataIndex: "wape", key: "wape", align: "right" as const, render: (value: number | null) => value === null ? "N/A" : `${(value * 100).toFixed(2)}%` },
+                      { title: "Accuracy", dataIndex: "accuracy", key: "accuracy", align: "right" as const, render: (value: number | null) => value === null ? "N/A" : `${(value * 100).toFixed(2)}%` },
+                      { title: "Coverage", dataIndex: "coverage", key: "coverage", align: "right" as const, render: (value: number) => `${(value * 100).toFixed(1)}%` },
+                      { title: "Rows", dataIndex: "rowCount", key: "rowCount", align: "right" as const },
+                      { title: "Folds", dataIndex: "foldCount", key: "foldCount", align: "right" as const },
+                      { title: "Status", dataIndex: "validationStatus", key: "validationStatus" },
+                    ]}
+                    scroll={{ x: 1250 }}
+                  />
+                </div>
+              </Card>
+            </section>
+
+            <section aria-label="Forecast Exceptions">
+              <Card className="content-card" title="Forecast Exceptions">
+                <Paragraph className="workspace-copy">
+                  This governed list is evaluated across Model, PLC, and PIS_PNO before
+                  eligibility filtering, and does not shrink when the displayed hierarchy level
+                  changes. Reason codes appear only where their evidence is applicable. Series-level
+                  findings show no single forecast month; forecast-specific findings name the actual
+                  affected month. Evidence uses only the completed-month cutoff.
+                </Paragraph>
+                <div role="region" aria-label="Forecast Exceptions table">
+                  <Table
+                    size="small"
+                    rowKey="exceptionId"
+                    pagination={{ pageSize: 12, hideOnSinglePage: true }}
+                    dataSource={data.forecastExceptions}
+                    columns={[
+                      { title: "Severity", dataIndex: "severity", key: "severity", render: (value: string) => <Tag color={value === "high" ? "red" : value === "medium" ? "gold" : "blue"}>{value.toUpperCase()}</Tag> },
+                      { title: "Reason code", dataIndex: "reasonCode", key: "reasonCode", width: 230 },
+                      { title: "Scope", dataIndex: "scope", key: "scope" },
+                      { title: "Series", dataIndex: "seriesKey", key: "seriesKey", width: 260 },
+                      { title: "Forecast month", dataIndex: "forecastMonth", key: "forecastMonth", render: (value: string | null, row) => row.seriesLevel ? "Series-level" : value },
+                      { title: "Evidence", dataIndex: "evidence", key: "evidence", width: 360, render: (value: Record<string, unknown>) => JSON.stringify(value) },
+                      { title: "Suggested action", dataIndex: "suggestedAction", key: "suggestedAction", width: 360 },
+                    ]}
+                    scroll={{ x: 1450 }}
+                  />
+                </div>
+              </Card>
+            </section>
+
+            <section aria-label="Prediction intervals">
+              <Card className="content-card" title="Prediction intervals">
+                <Paragraph className="workspace-copy">
+                  Bounds use horizon-specific held-out rolling-origin residuals and are constrained
+                  to 0 ≤ lower ≤ point ≤ upper. Nominal and empirical coverage are reported separately.
+                  {` ${data.summary.predictionIntervals.childCoveragePolicy}`}
+                </Paragraph>
+                <div role="region" aria-label="Official Total prediction interval table">
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey={(row) => `${row.forecastMonth}-${row.horizon}`}
+                    dataSource={data.summary.predictionIntervals.officialTotal}
+                    columns={[
+                      { title: "Forecast month", dataIndex: "forecastMonth", key: "forecastMonth" },
+                      { title: "Horizon", dataIndex: "horizon", key: "horizon", render: (value: number) => `H${value}` },
+                      { title: "Lower", dataIndex: "lower", key: "lower", align: "right" as const, render: (value: number) => formatValue(value, metric) },
+                      { title: "Point", dataIndex: "point", key: "point", align: "right" as const, render: (value: number) => formatValue(value, metric) },
+                      { title: "Upper", dataIndex: "upper", key: "upper", align: "right" as const, render: (value: number) => formatValue(value, metric) },
+                      { title: "Nominal", dataIndex: "nominalCoverage", key: "nominalCoverage", render: (value: number) => `${(value * 100).toFixed(0)}%` },
+                      { title: "Empirical", dataIndex: "empiricalCoverage", key: "empiricalCoverage", render: (value: number | null) => value === null ? "N/A" : `${(value * 100).toFixed(1)}%` },
+                      { title: "Coverage samples", dataIndex: "coverageSampleCount", key: "coverageSampleCount", align: "right" as const },
+                      { title: "Calibration residuals", dataIndex: "calibrationResidualCount", key: "calibrationResidualCount", align: "right" as const },
+                      { title: "Status", dataIndex: "validationStatus", key: "validationStatus" },
+                    ]}
+                    scroll={{ x: 1450 }}
+                  />
+                </div>
+              </Card>
+            </section>
+
             <Alert
               type={data.summary.nowcastMonths.length ? "warning" : "info"}
               showIcon
@@ -334,7 +502,7 @@ export default function ForecastCenterPanel({
               description={data.summary.periodExplanation}
             />
 
-            <Card className="content-card" title="Business-policy validation" variant="borderless">
+            <Card className="content-card" title="Business-policy validation">
               <Table
                 size="small"
                 pagination={false}
@@ -355,12 +523,13 @@ export default function ForecastCenterPanel({
                 ]}
               />
               <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
-                Fleet is not added to PIO quantity or revenue. Low-volume and stopped series receive no normal allocation;
+                Current runtime does not yet add Fleet. The approved KUS Fleet-first, no-double-counting rule is pending implementation.
+                Low-volume and stopped series receive no normal allocation;
                 new/reintroduced models use a recent run-rate proxy. Any unavoidable remainder is labeled Planner review residual.
               </Paragraph>
             </Card>
 
-            <Card className="content-card" title="Model formulas and allocation logic" variant="borderless">
+            <Card className="content-card" title="Model formulas and allocation logic">
               <Table
                 size="small"
                 pagination={false}
@@ -374,11 +543,6 @@ export default function ForecastCenterPanel({
                 scroll={{ x: 900 }}
               />
             </Card>
-                    </div>
-                  ),
-                },
-              ]}
-            />
 
             {metric !== "wholesale_quantity" ? (
               <Card className="content-card" title="Top 10 PLC accessories by historical revenue">
@@ -410,16 +574,9 @@ export default function ForecastCenterPanel({
 
             <Card
               className="content-card"
-              title="Forecast Results"
+              title="Reconciled forecast results"
               extra={<Tag color={data.summary.reconciliation.status === "PASS" ? "green" : "red"}>{data.summary.reconciliation.status}</Tag>}
             >
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message="Governed point forecast months"
-                description="This table contains reconciled point forecasts only. Validated lower and upper intervals are intentionally deferred to PR C."
-              />
               <Table
                 size="small"
                 rowKey="seriesKey"

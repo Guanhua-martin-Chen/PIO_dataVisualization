@@ -110,6 +110,15 @@ class HierarchicalForecastTests(unittest.TestCase):
                 model_strategy="random_model",
             )
 
+    def test_reference_portfolio_is_not_available_on_generic_quantity_api(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Forecast Center Revenue"):
+            build_hierarchical_forecast(
+                self.facts,
+                self.working_days,
+                level="brand",
+                model_strategy="reference_portfolio",
+            )
+
     def test_model_accessory_rejects_a_shared_forced_model(self) -> None:
         with self.assertRaisesRegex(ValueError, "automatic per-series"):
             build_hierarchical_forecast(

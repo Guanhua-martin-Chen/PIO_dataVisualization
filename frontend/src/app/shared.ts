@@ -401,6 +401,80 @@ export type ForecastCenterPayload = {
       anchorFormula: string;
       childPolicy: string;
     };
+    evaluationScopes: Array<{
+      evaluationScopeId: string;
+      label: string;
+      validationStatus: string;
+      sourceHash: string;
+      cutoff: string;
+      target: string;
+      horizons: number[];
+      minimumTrainingMonths: number | null;
+      expectedFoldCounts: Record<string, number> | null;
+      commonOriginRows: number | null;
+      brandPredictionRows: number | null;
+      grain: string;
+      aggregation: string;
+      coverage: string;
+      comparabilityNote: string;
+    }>;
+    registeredEvidenceGate: {
+      evaluationScopeId: string;
+      eligible: boolean;
+      validationStatus: string;
+      checks: Record<string, boolean>;
+    };
+    fairModelComparison: {
+      evaluationScopeId?: string;
+      validationStatus: string;
+      comparisonType: string;
+      disclosure?: string;
+      sourceHash?: string;
+      cutoff?: string;
+      foldCount?: number | null;
+      aggregation?: string;
+      rows: Array<{
+        modelId: string;
+        label: string;
+        comparisonType: string;
+        hmaMethod: string;
+        gmaMethod: string;
+        kusMethod: string;
+        officialTotalWape: number;
+        accuracy: number;
+        foldCount: number;
+      }>;
+    };
+    allocationAccuracy: Array<{
+      evaluationScopeId?: string;
+      level: string;
+      validationStatus: string;
+      scope: string;
+      target?: string;
+      grain: string;
+      signal?: string;
+      isolationPolicy?: string;
+      wape: number | null;
+      accuracy: number | null;
+      coverage: number;
+      rowCount: number;
+      foldCount: number;
+      expectedFoldCount?: number;
+    }>;
+    predictionIntervals: {
+      nominalCoverage: number;
+      method?: string;
+      evaluationScopeId?: string;
+      registeredMetricScopeValidated?: boolean;
+      officialTotal: Array<ForecastInterval>;
+      brands: Array<{
+        brand: string;
+        validationStatus: string;
+        calibrationResidualCount: number;
+        empiricalCoverage: number | null;
+      }>;
+      childCoveragePolicy: string;
+    };
     modelGovernance: {
       requestedStrategy: string;
       sourceHash: string;
@@ -412,11 +486,148 @@ export type ForecastCenterPayload = {
       referenceMethodStatus: string;
       contractVersion: string | null;
       brandSpecificMethods: Record<string, string>;
+      evaluationScopeId: string;
+      validationGate: Record<string, unknown>;
     };
   };
   records: ForecastCenterRecord[];
   topAccessories: ForecastCenterRecord[];
   brandRecords: ForecastCenterRecord[];
+  forecastExceptions: Array<{
+    exceptionId: string;
+    reasonCode: string;
+    severity: "high" | "medium" | "low";
+    scope: string;
+    grain: string;
+    seriesKey: string;
+    entityKey: string;
+    brand: string;
+    modelName: string;
+    plc: string;
+    partNumber: string;
+    forecastMonth: string | null;
+    seriesLevel: boolean;
+    evidence: Record<string, unknown>;
+    suggestedAction: string;
+  }>;
+};
+
+export type ForecastOutputRunMetadata = {
+  runId: string;
+  workbookId: string;
+  sheetName: string;
+  sourceHash: string;
+  sourceSignature: string;
+  sourceFilename: string;
+  cutoff: string;
+  filters: {
+    brand: string[];
+    model: string[];
+    part: string[];
+    startDate: string;
+    endDate: string;
+  };
+  horizon: number;
+  topN: number;
+  useWorkingDays: boolean;
+  useSeasonality: boolean;
+  tariffImpactPct: number;
+  minimumMonthlyVolume: number;
+  requestedStrategy: string;
+  effectiveStrategies: Record<"revenue" | "quantity" | "wholesale_quantity", string>;
+  effectiveBrandMethods: Record<string, Record<string, string>>;
+  nowcastPeriods: string[];
+  forecastPeriods: string[];
+  createdAt: string;
+  contractVersion: string;
+  retentionPolicy: string;
+};
+
+export type ForecastOutputIdentityInput = {
+  workbookId: string;
+  sheetName: string;
+  brand: string[];
+  model: string[];
+  part: string[];
+  startDate: string;
+  endDate: string;
+  horizon: number;
+  topN: number;
+  useWorkingDays: boolean;
+  useSeasonality: boolean;
+  tariffImpactPct: number;
+  minimumMonthlyVolume: number;
+  requestedStrategy: string;
+};
+
+export function buildForecastOutputIdentityFingerprint(input: ForecastOutputIdentityInput) {
+  const normalizedList = (values: string[]) =>
+    Array.from(new Set(values.filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  return JSON.stringify({
+    workbookId: input.workbookId,
+    sheetName: input.sheetName,
+    brand: normalizedList(input.brand),
+    model: normalizedList(input.model),
+    part: normalizedList(input.part),
+    startDate: input.startDate || "",
+    endDate: input.endDate || "",
+    horizon: Number(input.horizon),
+    topN: Number(input.topN),
+    useWorkingDays: Boolean(input.useWorkingDays),
+    useSeasonality: Boolean(input.useSeasonality),
+    tariffImpactPct: Number(input.tariffImpactPct),
+    minimumMonthlyVolume: Number(input.minimumMonthlyVolume),
+    requestedStrategy: input.requestedStrategy,
+  });
+}
+
+export type ForecastOutputRunPreview = {
+  metadata: ForecastOutputRunMetadata;
+  executiveSummary: {
+    contractVersion: string;
+    metadata: ForecastOutputRunMetadata;
+    units: {
+      revenue: "USD";
+      quantity: "installed accessory units";
+      wholesale_quantity: "vehicles";
+    };
+    headlineTotals: Array<{
+      month: string;
+      periodType: "Nowcast" | "Forecast";
+      revenue: number;
+      quantity: number;
+      wholesale_quantity: number;
+    }>;
+    topPlcs: ForecastCenterRecord[];
+    reconciliation: Record<
+      "revenue" | "quantity" | "wholesale_quantity",
+      ForecastCenterPayload["summary"]["reconciliation"]
+    >;
+    periodDefinitions: {
+      nowcast: string;
+      forecast: string;
+    };
+  };
+  artifacts: {
+    detailedExcel: "ready";
+    executiveSummaryPdf: "ready" | "dependency_unavailable";
+    currentViewCsv: "ready";
+  };
+  reused: boolean;
+};
+
+export type ForecastInterval = {
+  forecastMonth: string;
+  horizon: number;
+  lower: number;
+  point: number;
+  upper: number;
+  nominalCoverage: number;
+  empiricalCoverage: number | null;
+  coverageSampleCount: number;
+  calibrationResidualCount: number;
+  calibrationScopeId: string;
+  validationStatus: string;
 };
 
 export type ForecastCenterRecord = {
@@ -464,6 +675,15 @@ export type ForecastCenterRecord = {
     allocationShare?: number;
     reconciliationFactor?: number;
     parentForecast?: number;
+    lower?: number;
+    point?: number;
+    upper?: number;
+    nominalCoverage?: number;
+    empiricalCoverage?: number | null;
+    coverageSampleCount?: number;
+    calibrationResidualCount?: number;
+    calibrationScopeId?: string;
+    validationStatus?: string;
   }>;
 };
 
