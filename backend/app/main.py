@@ -47,6 +47,12 @@ from pio_platform.fact_table import (
 from pio_platform.model_entities import build_model_entity_map, build_model_lifecycle
 from pio_platform.hierarchical_forecasting import build_hierarchical_forecast
 from pio_platform.forecast_center import build_forecast_center, build_part_planning_records
+from pio_platform.output_center import (
+    build_current_view_csv,
+    create_or_get_output_run,
+    get_output_run,
+    output_run_preview,
+)
 from pio_platform.sop_workbook import build_sop_workbook_bytes
 from pio_platform.pivot import build_pivot, is_wide_month_matrix, wide_brand_series
 from pio_platform.profiling import build_column_profile, build_insights, compute_kpis
@@ -119,6 +125,21 @@ class AnalystRequest(BaseModel):
     part: list[str] = Field(default_factory=list)
     start_date: str = ""
     end_date: str = ""
+
+
+class ForecastOutputRunRequest(BaseModel):
+    brand: list[str] = Field(default_factory=list)
+    model: list[str] = Field(default_factory=list)
+    part: list[str] = Field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
+    horizon: int = Field(default=3, ge=1, le=12)
+    top_n: int = Field(default=10, ge=1, le=21)
+    use_working_days: bool = True
+    use_seasonality: bool = True
+    tariff_impact_pct: float = Field(default=0.0, ge=-100.0, le=100.0)
+    min_monthly_volume: float = Field(default=5.0, ge=0.0)
+    requested_strategy: str = "auto"
 
 
 def _load_local_env() -> None:
@@ -624,6 +645,156 @@ def get_forecast_center(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post(
+    "/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/runs"
+)
+def create_forecast_output_run(
+    workbook_id: str,
+    sheet_name: str,
+    request: ForecastOutputRunRequest,
+) -> dict[str, Any]:
+    session = _get_session(workbook_id)
+    facts = _get_monthly_fact_table(session, sheet_name).copy()
+    wholesale_long = _all_wholesale_long(session, sheet_name)
+    facts, wholesale_long = _filter_forecast_sources(
+        facts,
+        wholesale_long,
+        brand=request.brand,
+        model=request.model,
+        part=request.part,
+        start_date=request.start_date,
+        end_date=request.end_date,
+    )
+    latest_month_is_complete, latest_sales_date = _forecast_cutoff_context(
+        session,
+        sheet_name,
+        request.end_date,
+    )
+    try:
+        output_run, reused = create_or_get_output_run(
+            workbook_id=workbook_id,
+            sheet_name=sheet_name,
+            source_filename=session.filename,
+            source_hash=_workbook_sha256(session.file_bytes),
+            facts=facts,
+            working_days=_working_days_long(session, sheet_name),
+            wholesale_long=wholesale_long,
+            filters={
+                "brand": request.brand,
+                "model": request.model,
+                "part": request.part,
+                "startDate": request.start_date,
+                "endDate": request.end_date,
+            },
+            horizon=request.horizon,
+            top_n=request.top_n,
+            use_working_days=request.use_working_days,
+            use_seasonality=request.use_seasonality,
+            tariff_impact_pct=request.tariff_impact_pct,
+            min_monthly_volume=request.min_monthly_volume,
+            requested_strategy=request.requested_strategy,
+            latest_sales_month_is_complete=latest_month_is_complete,
+            latest_sales_date=latest_sales_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return output_run_preview(output_run, reused=reused)
+
+
+@app.get(
+    "/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/runs/{run_id}"
+)
+def get_forecast_output_run_preview(
+    workbook_id: str,
+    sheet_name: str,
+    run_id: str,
+) -> dict[str, Any]:
+    return output_run_preview(
+        _require_output_run(workbook_id, sheet_name, run_id)
+    )
+
+
+@app.get(
+    "/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/runs/{run_id}/detailed.xlsx"
+)
+def download_forecast_output_excel(
+    workbook_id: str,
+    sheet_name: str,
+    run_id: str,
+) -> StreamingResponse:
+    output_run = _require_output_run(workbook_id, sheet_name, run_id)
+    filename = (
+        f"{output_run['metadata']['sourceFilename'].rsplit('.', 1)[0]}"
+        f"-PIO-Forecast-{run_id[-12:]}.xlsx"
+    )
+    return StreamingResponse(
+        iter([output_run["artifacts"]["detailedExcel"]]),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get(
+    "/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/runs/{run_id}/executive-summary.pdf"
+)
+def download_forecast_output_pdf(
+    workbook_id: str,
+    sheet_name: str,
+    run_id: str,
+) -> StreamingResponse:
+    output_run = _require_output_run(workbook_id, sheet_name, run_id)
+    pdf_bytes = output_run["artifacts"]["executiveSummaryPdf"]
+    if pdf_bytes is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Executive Summary PDF is unavailable because the governed "
+                "reportlab dependency is not installed."
+            ),
+        )
+    filename = (
+        f"{output_run['metadata']['sourceFilename'].rsplit('.', 1)[0]}"
+        f"-Executive-Summary-{run_id[-12:]}.pdf"
+    )
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get(
+    "/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/runs/{run_id}/current-view.csv"
+)
+def download_forecast_output_csv(
+    workbook_id: str,
+    sheet_name: str,
+    run_id: str,
+    metric: str = Query(default="revenue"),
+    level: str = Query(default="brand"),
+) -> StreamingResponse:
+    output_run = _require_output_run(workbook_id, sheet_name, run_id)
+    try:
+        csv_text = build_current_view_csv(
+            output_run,
+            metric=metric,
+            level=level,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = (
+        f"{output_run['metadata']['sourceFilename'].rsplit('.', 1)[0]}"
+        f"-{metric}-{level}-{run_id[-12:]}.csv"
+    )
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/forecast-center/export.csv")
 def export_forecast_center_csv(
     workbook_id: str,
@@ -961,7 +1132,9 @@ def get_anomaly_center(
     sales_sheet = _forecast_sales_sheet_name(session, sheet_name)
     bundle = _get_bundle(session, sales_sheet)
     all_wholesale = _all_wholesale_long(session, sales_sheet)
-    anomaly_wholesale_long = pd.DataFrame(columns=["brand", "model", "month", "wholesale"])
+    anomaly_wholesale_long = pd.DataFrame(
+        columns=["brand", "model", "month", "wholesale"]
+    )
     if not all_wholesale.empty:
         anomaly_wholesale_long = all_wholesale.loc[
             :,
@@ -1172,6 +1345,27 @@ def unhandled_exception(_: Any, exc: Exception) -> JSONResponse:
 
 
 # ── Session helpers ───────────────────────────────────────────────────────────
+def _require_output_run(
+    workbook_id: str,
+    sheet_name: str,
+    run_id: str,
+) -> dict[str, Any]:
+    output_run = get_output_run(
+        run_id,
+        workbook_id=workbook_id,
+        sheet_name=sheet_name,
+    )
+    if output_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Forecast output run not found or expired. Prepare a new run; "
+                "downloads never silently recompute."
+            ),
+        )
+    return output_run
+
+
 def _get_session(workbook_id: str) -> WorkbookSession:
     session = WORKBOOKS.get(workbook_id)
     if session:
