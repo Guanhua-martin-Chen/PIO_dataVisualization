@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 from typing import Any
 
 from openpyxl import Workbook
@@ -30,6 +31,8 @@ def build_sop_workbook_bytes(
     part_quantity: list[dict[str, Any]],
     part_revenue: list[dict[str, Any]],
     working_days: list[dict[str, Any]],
+    executive_summary: dict[str, Any] | None = None,
+    run_metadata: dict[str, Any] | None = None,
 ) -> bytes:
     workbook = Workbook()
     workbook.remove(workbook.active)
@@ -37,13 +40,22 @@ def build_sop_workbook_bytes(
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
 
-    _build_executive_summary(workbook, source_filename, revenue, quantity, wholesale)
+    _build_executive_summary(
+        workbook,
+        source_filename,
+        revenue,
+        quantity,
+        wholesale,
+        executive_summary=executive_summary,
+    )
     _build_forecast_sheet(workbook, "Revenue_Forecast", revenue, currency=True)
     _build_forecast_sheet(workbook, "Quantity_Forecast", quantity, currency=False)
     _build_part_planning(workbook, part_quantity, part_revenue)
     _build_forecast_sheet(workbook, "Wholesale_Drivers", wholesale, currency=False)
     _build_model_performance(workbook, revenue, quantity, wholesale)
     _build_qa_assumptions(workbook, source_filename, revenue, quantity, wholesale, working_days)
+    if run_metadata is not None:
+        _build_run_metadata(workbook, run_metadata)
 
     output = BytesIO()
     workbook.save(output)
@@ -56,7 +68,12 @@ def _build_executive_summary(
     revenue: dict[str, Any],
     quantity: dict[str, Any],
     wholesale: dict[str, Any],
+    *,
+    executive_summary: dict[str, Any] | None = None,
 ) -> None:
+    if executive_summary is not None:
+        _build_governed_executive_summary(workbook, executive_summary)
+        return
     sheet = workbook.create_sheet("Executive_Summary")
     _title_block(
         sheet,
@@ -166,6 +183,154 @@ def _build_executive_summary(
 
     _set_widths(sheet, {"A": 22, "B": 28, "C": 22, "D": 18, "E": 18, "F": 18, "G": 3, "H": 22, "I": 18, "J": 18})
     sheet.freeze_panes = "A12"
+    sheet.sheet_view.showGridLines = False
+
+
+def _build_governed_executive_summary(
+    workbook: Workbook,
+    executive_summary: dict[str, Any],
+) -> None:
+    metadata = executive_summary["metadata"]
+    sheet = workbook.create_sheet("Executive_Summary")
+    _title_block(
+        sheet,
+        "PIO FORECAST - EXECUTIVE SUMMARY",
+        "Immutable governed output run shared by web preview, PDF, and detailed Excel",
+        end_column=10,
+    )
+    metadata_rows = [
+        ("Forecast run ID", metadata["runId"]),
+        ("Source workbook", metadata["sourceFilename"]),
+        ("Source hash", metadata["sourceHash"]),
+        ("Completed training through", metadata["cutoff"]),
+        ("Requested strategy", metadata["requestedStrategy"]),
+        (
+            "Effective strategies",
+            ", ".join(
+                f"{metric}={strategy}"
+                for metric, strategy in metadata["effectiveStrategies"].items()
+            ),
+        ),
+        ("Nowcast periods", ", ".join(metadata["nowcastPeriods"]) or "None"),
+        ("Forecast periods", ", ".join(metadata["forecastPeriods"]) or "None"),
+        ("Created at", metadata["createdAt"]),
+        ("Output contract", metadata["contractVersion"]),
+    ]
+    for row, (label, value) in enumerate(metadata_rows, start=5):
+        sheet.cell(row, 1, label)
+        sheet.cell(row, 2, value)
+        sheet.merge_cells(start_row=row, start_column=2, end_row=row, end_column=6)
+    _style_label_value_block(sheet, 5, 4 + len(metadata_rows), 1, 6)
+
+    sheet.cell(5, 8, "RECONCILIATION")
+    sheet.cell(5, 8).font = Font(bold=True, color=NAVY)
+    for row, metric in enumerate(
+        ("revenue", "quantity", "wholesale_quantity"),
+        start=6,
+    ):
+        check = executive_summary["reconciliation"][metric]
+        sheet.cell(row, 8, metric.replace("_", " ").title())
+        sheet.cell(row, 9, check.get("status"))
+        sheet.cell(row, 9).fill = PatternFill(
+            "solid",
+            fgColor=GREEN if check.get("status") == "PASS" else RED,
+        )
+        sheet.cell(row, 9).font = Font(bold=True, color=TEXT)
+
+    headline_row = 17
+    sheet.cell(headline_row, 1, "GOVERNED HEADLINE TOTALS")
+    sheet.merge_cells(
+        start_row=headline_row,
+        start_column=1,
+        end_row=headline_row,
+        end_column=8,
+    )
+    _section_header(sheet, headline_row, 1, 8)
+    headers = [
+        "Forecast Month",
+        "Period Type",
+        "Revenue (USD)",
+        "PIO Quantity (installed accessory units)",
+        "Wholesale Quantity (vehicles)",
+    ]
+    for column, value in enumerate(headers, start=1):
+        sheet.cell(headline_row + 1, column, value)
+    for offset, item in enumerate(
+        executive_summary["headlineTotals"],
+        start=2,
+    ):
+        row = headline_row + offset
+        values = [
+            item["month"],
+            item["periodType"],
+            float(item["revenue"]),
+            float(item["quantity"]),
+            float(item["wholesale_quantity"]),
+        ]
+        for column, value in enumerate(values, start=1):
+            sheet.cell(row, column, value)
+        sheet.cell(row, 3).number_format = "$#,##0.00"
+        sheet.cell(row, 4).number_format = "#,##0.00"
+        sheet.cell(row, 5).number_format = "#,##0.00"
+    headline_end = headline_row + 1 + len(executive_summary["headlineTotals"])
+    _format_table_block(sheet, headline_row + 1, headline_end, 1, len(headers))
+
+    top_row = headline_end + 3
+    sheet.cell(top_row, 1, "TOP 10 PLC - REVENUE FORECAST")
+    sheet.merge_cells(
+        start_row=top_row,
+        start_column=1,
+        end_row=top_row,
+        end_column=8,
+    )
+    _section_header(sheet, top_row, 1, 8)
+    forecast_months = [
+        item["month"] for item in executive_summary["headlineTotals"]
+    ]
+    top_headers = ["Rank", "PLC", "Historical Revenue Share", *forecast_months]
+    for column, value in enumerate(top_headers, start=1):
+        sheet.cell(top_row + 1, column, value)
+    top_records = executive_summary["topPlcs"][:10]
+    for offset, record in enumerate(top_records, start=2):
+        row = top_row + offset
+        sheet.cell(row, 1, record.get("rank"))
+        sheet.cell(row, 2, record.get("plc"))
+        sheet.cell(
+            row,
+            3,
+            float(record.get("historyRevenueSharePct", 0.0)) / 100.0,
+        )
+        sheet.cell(row, 3).number_format = "0.0%"
+        forecast_map = {
+            str(item["month"]): float(item["value"])
+            for item in record.get("forecast", [])
+        }
+        for column, month in enumerate(forecast_months, start=4):
+            sheet.cell(row, column, forecast_map.get(month, 0.0))
+            sheet.cell(row, column).number_format = "$#,##0.00"
+    _format_table_block(
+        sheet,
+        top_row + 1,
+        top_row + 1 + len(top_records),
+        1,
+        len(top_headers),
+    )
+    _set_widths(
+        sheet,
+        {
+            "A": 30,
+            "B": 34,
+            "C": 24,
+            "D": 26,
+            "E": 25,
+            "F": 20,
+            "G": 3,
+            "H": 24,
+            "I": 18,
+            "J": 18,
+        },
+    )
+    sheet.freeze_panes = "A18"
     sheet.sheet_view.showGridLines = False
 
 
@@ -474,7 +639,7 @@ def _build_qa_assumptions(
         ("Brand policy", revenue["summary"].get("brandDefinition")),
         (
             "Wholesale denominator policy",
-            "HMA, GMA, and KUS use dealer/non-fleet wholesale under the current business rule. Fleet is not added to PIO.",
+            "Current runtime uses dealer/non-fleet wholesale. The approved KUS contract separates Wholesale and Carpet Floor Mat Fleet baskets from 2026-06; implementation and backtest are pending.",
         ),
         (
             "Lifecycle policy",
@@ -505,6 +670,35 @@ def _build_qa_assumptions(
             cell.alignment = Alignment(vertical="top", wrap_text=True)
     sheet.freeze_panes = "A8"
     sheet.sheet_view.showGridLines = False
+
+
+def _build_run_metadata(
+    workbook: Workbook,
+    run_metadata: dict[str, Any],
+) -> None:
+    sheet = workbook.create_sheet("Run_Metadata")
+    sheet.append(["Field", "Value"])
+    for field, value in run_metadata.items():
+        sheet.append(
+            [
+                field,
+                (
+                    json.dumps(
+                        value,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                    if isinstance(value, (dict, list))
+                    else value
+                ),
+            ]
+        )
+    _format_table_block(sheet, 1, sheet.max_row, 1, 2)
+    _set_widths(sheet, {"A": 30, "B": 110})
+    sheet.freeze_panes = "A2"
+    sheet.sheet_state = "hidden"
 
 
 def _part_key(record: dict[str, Any]) -> tuple[str, ...]:

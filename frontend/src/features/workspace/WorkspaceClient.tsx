@@ -53,6 +53,7 @@ import {
   AnomalyCenterPayload,
   API_BASE_URL,
   ForecastCenterPayload,
+  ForecastOutputRunPreview,
   ForecastPayload,
   HierarchicalForecastPayload,
   MonthlyFactsPayload,
@@ -64,12 +65,14 @@ import {
   forecastChartOption,
   formatMetric,
   chartOption,
+  buildForecastOutputIdentityFingerprint,
   buildWorkspaceParams,
 } from "../../app/shared";
 
 const { RangePicker } = DatePicker;
 const { Title, Paragraph, Text } = Typography;
-const LEGACY_FORECAST_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_LEGACY_FORECAST_UI === "true";
+const LEGACY_FORECAST_UI_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_LEGACY_FORECAST_UI === "true";
 
 type InventorySource = {
   part: string;
@@ -163,6 +166,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [forecastCenterData, setForecastCenterData] = useState<ForecastCenterPayload | null>(null);
   const [inventoryPlanningData, setInventoryPlanningData] = useState<ForecastCenterPayload | null>(null);
   const [inventoryPlanningLoading, setInventoryPlanningLoading] = useState(false);
+  const [forecastOutputRun, setForecastOutputRun] = useState<ForecastOutputRunPreview | null>(null);
+  const [forecastOutputRunLoading, setForecastOutputRunLoading] = useState(false);
   const [hierarchicalForecastLoading, setHierarchicalForecastLoading] = useState(false);
   const [forecastMetric, setForecastMetric] = useState<"revenue" | "quantity" | "wholesale_quantity">("revenue");
   const [hierarchyLevel, setHierarchyLevel] = useState<"brand" | "model" | "plc" | "model_plc">("brand");
@@ -216,6 +221,59 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     const normalized = sheetName.trim().toLowerCase().replaceAll(" ", "_");
     return normalized === "working_days" || normalized === "plc_legend";
   }
+
+  const forecastOutputIdentity = {
+    workbookId: workbook?.id ?? id,
+    sheetName: resolveForecastSheetName(workspace?.sheetName ?? ""),
+    brand: forecastFilterState.brand.filter((brand) => ["HMA", "GMA", "KUS"].includes(brand)),
+    model: forecastFilterState.model,
+    part: forecastFilterState.part,
+    startDate: forecastFilterState.startDate,
+    endDate: forecastFilterState.endDate,
+    horizon: forecastHorizon,
+    topN: 10,
+    useWorkingDays,
+    useSeasonality,
+    tariffImpactPct,
+    minimumMonthlyVolume,
+    requestedStrategy: hierarchyModelStrategy,
+  };
+  const forecastOutputIdentityFingerprint =
+    buildForecastOutputIdentityFingerprint(forecastOutputIdentity);
+  const preparedOutputIdentityFingerprint = forecastOutputRun
+    ? buildForecastOutputIdentityFingerprint({
+        workbookId: forecastOutputRun.metadata.workbookId,
+        sheetName: forecastOutputRun.metadata.sheetName,
+        brand: forecastOutputRun.metadata.filters.brand,
+        model: forecastOutputRun.metadata.filters.model,
+        part: forecastOutputRun.metadata.filters.part,
+        startDate: forecastOutputRun.metadata.filters.startDate,
+        endDate: forecastOutputRun.metadata.filters.endDate,
+        horizon: forecastOutputRun.metadata.horizon,
+        topN: forecastOutputRun.metadata.topN,
+        useWorkingDays: forecastOutputRun.metadata.useWorkingDays,
+        useSeasonality: forecastOutputRun.metadata.useSeasonality,
+        tariffImpactPct: forecastOutputRun.metadata.tariffImpactPct,
+        minimumMonthlyVolume: forecastOutputRun.metadata.minimumMonthlyVolume,
+        requestedStrategy: forecastOutputRun.metadata.requestedStrategy,
+      })
+    : null;
+  const validForecastOutputRun =
+    preparedOutputIdentityFingerprint === forecastOutputIdentityFingerprint
+      ? forecastOutputRun
+      : null;
+  const forecastOutputIdentityRef = useRef(forecastOutputIdentityFingerprint);
+  forecastOutputIdentityRef.current = forecastOutputIdentityFingerprint;
+
+  useEffect(() => {
+    if (forecastOutputRun && preparedOutputIdentityFingerprint !== forecastOutputIdentityFingerprint) {
+      setForecastOutputRun(null);
+    }
+  }, [
+    forecastOutputIdentityFingerprint,
+    forecastOutputRun,
+    preparedOutputIdentityFingerprint,
+  ]);
 
   // Save custom column order to localStorage on change
   useEffect(() => {
@@ -353,6 +411,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           setForecastData(null);
           setForecastCenterData(null);
           setInventoryPlanningData(null);
+          setForecastOutputRun(null);
         }
         // Load custom column order from localStorage if available
         const cacheKey = `col_order_${id}_${payload.sheetName}`;
@@ -503,6 +562,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     level = hierarchyLevel,
     metric = forecastMetric,
     horizon = forecastHorizon,
+    modelStrategy = hierarchyModelStrategy,
   ) {
     const governedForecastSheet = resolveForecastSheetName(sheetName);
     const hierarchyState = {
@@ -519,7 +579,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     params.set("use_working_days", String(useWorkingDays));
     params.set("use_seasonality", String(useSeasonality));
     params.set("tariff_impact_pct", String(tariffImpactPct));
-    params.set("model_strategy", hierarchyModelStrategy);
+    params.set("model_strategy", modelStrategy);
     params.set("min_monthly_volume", String(minimumMonthlyVolume));
     params.set("top_n", "10");
     forecastCenterRequest.current?.abort();
@@ -549,7 +609,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     }
   }
 
-  async function loadInventoryPlanningData(sheetName: string, state: TableState, horizon = forecastHorizon) {
+  async function loadInventoryPlanningData(
+    sheetName: string,
+    state: TableState,
+    horizon = forecastHorizon,
+  ) {
     const governedForecastSheet = resolveForecastSheetName(sheetName);
     const planningState = {
       ...state,
@@ -566,14 +630,16 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     params.set("use_working_days", String(useWorkingDays));
     params.set("use_seasonality", String(useSeasonality));
     params.set("tariff_impact_pct", String(tariffImpactPct));
-    params.set("model_strategy", hierarchyModelStrategy === "reference_portfolio" ? "auto" : hierarchyModelStrategy);
+    params.set(
+      "model_strategy",
+      hierarchyModelStrategy === "reference_portfolio" ? "auto" : hierarchyModelStrategy,
+    );
     params.set("min_monthly_volume", String(minimumMonthlyVolume));
     params.set("top_n", "10");
 
     inventoryPlanningRequest.current?.abort();
     const controller = new AbortController();
     inventoryPlanningRequest.current = controller;
-    setInventoryPlanningData(null);
     setInventoryPlanningLoading(true);
     try {
       const response = await fetch(
@@ -581,14 +647,16 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         { signal: controller.signal },
       );
       if (!response.ok) {
-        throw new Error((await response.json()).detail ?? "Failed to load the governed inventory planning preview.");
+        throw new Error((await response.json()).detail ?? "Failed to load governed inventory planning.");
       }
       const payload = (await response.json()) as ForecastCenterPayload;
-      if (controller.signal.aborted) return;
-      setInventoryPlanningData(payload);
+      if (!controller.signal.aborted) {
+        setInventoryPlanningData(payload);
+      }
     } catch (err) {
-      if (isAbortError(err)) return;
-      messageApi.error(err instanceof Error ? err.message : "Failed to load the governed inventory planning preview.");
+      if (!isAbortError(err)) {
+        messageApi.error(err instanceof Error ? err.message : "Failed to load governed inventory planning.");
+      }
     } finally {
       if (inventoryPlanningRequest.current === controller) {
         inventoryPlanningRequest.current = null;
@@ -827,7 +895,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   function syncForecastFromTable() {
     if (!workspace) return;
     const governedForecastSheet = resolveForecastSheetName(workspace.sheetName);
-    if (forecastView === "hierarchy") {
+    if (forecastView === "hierarchy" || forecastView === "output") {
       const compatibleState = {
         ...tableState,
         search: "",
@@ -837,12 +905,16 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         page: 1,
       };
       setForecastFilterState(compatibleState);
-      loadHierarchicalForecast(
-        governedForecastSheet,
-        compatibleState,
-        hierarchyLevel,
-        forecastMetric,
-      );
+      setForecastOutputRun(null);
+      setInventoryPlanningData(null);
+      if (forecastView === "hierarchy") {
+        loadHierarchicalForecast(
+          governedForecastSheet,
+          compatibleState,
+          hierarchyLevel,
+          forecastMetric,
+        );
+      }
       messageApi.info(
         "Forecast Center synchronized governed HMA/GMA/KUS, model, and date filters. Source H/K, search, model year, and part filters stay in Data Workspace because they do not match the anchor grain."
       );
@@ -862,6 +934,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     };
     setForecastFilterState(nextState);
     setForecastPart("");
+    setForecastOutputRun(null);
+    setInventoryPlanningData(null);
     if (forecastView === "hierarchy") {
       loadHierarchicalForecast(
         resolveForecastSheetName(workspace.sheetName),
@@ -869,7 +943,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         hierarchyLevel,
         forecastMetric,
       );
-    } else {
+    } else if (forecastView !== "output") {
       loadForecastData(resolveForecastSheetName(workspace.sheetName), nextState, "", forecastHorizon);
     }
   }
@@ -879,6 +953,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     const cleared = { ...defaultTableState, pageSize: forecastFilterState.pageSize || tableState.pageSize };
     setForecastFilterState(cleared);
     setForecastPart("");
+    setForecastOutputRun(null);
+    setInventoryPlanningData(null);
     if (forecastView === "hierarchy") {
       loadHierarchicalForecast(
         resolveForecastSheetName(workspace.sheetName),
@@ -886,7 +962,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         hierarchyLevel,
         forecastMetric,
       );
-    } else {
+    } else if (forecastView !== "output") {
       loadForecastData(resolveForecastSheetName(workspace.sheetName), cleared, "", forecastHorizon);
     }
   }
@@ -901,12 +977,19 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       page: 1,
     };
     loadAnomalyData(resolveForecastSheetName(workspace.sheetName), compatibleState);
-    messageApi.success("Exceptions refreshed from governed PIO data with compatible Brand, Model, and date filters");
+    messageApi.success(
+      "Exceptions refreshed from governed PIO data with compatible Brand, Model, and date filters",
+    );
   }
 
   function handleDataSubTabChange(key: string) {
     setDataSubTab(key);
-    if (key === "eda" && workspace && !workspace.edaDashboard && !isEdaReferenceSheet(workspace.sheetName)) {
+    if (
+      key === "eda"
+      && workspace
+      && !workspace.edaDashboard
+      && !isEdaReferenceSheet(workspace.sheetName)
+    ) {
       loadWorkspaceData(workspace.sheetName, tableState, true, true);
     }
     if (key === "monthly-facts" && workspace) {
@@ -916,27 +999,61 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function loadForecastSurface(key: string) {
     if (!workspace) return;
-    if (key === "exceptions") {
+    if (!LEGACY_FORECAST_UI_ENABLED) {
+      if (key === "forecast" || key === "exceptions") {
+        if (!forecastCenterData && !forecastCenterRequest.current) {
+          loadHierarchicalForecast(
+            resolveForecastSheetName(workspace.sheetName),
+            forecastFilterState,
+            hierarchyLevel,
+            forecastMetric,
+          );
+        }
+        return;
+      }
+      if (key === "inventory") {
+        if (!inventoryPlanningData && !inventoryPlanningRequest.current) {
+          loadInventoryPlanningData(
+            resolveForecastSheetName(workspace.sheetName),
+            forecastFilterState,
+            forecastHorizon,
+          );
+        }
+        return;
+      }
+      if (key === "output") return;
+    }
+    if (key === "anomaly") {
       if (!anomalyRequest.current) {
-        loadAnomalyData(resolveForecastSheetName(workspace.sheetName), forecastFilterState);
+        loadAnomalyData(workspace.sheetName, tableState);
       }
       return;
     }
     if (key === "forecast") {
-      if (!forecastCenterRequest.current) {
-        loadHierarchicalForecast(
+      if (forecastView === "hierarchy") {
+        if (!forecastCenterRequest.current) {
+          loadHierarchicalForecast(
+            resolveForecastSheetName(workspace.sheetName),
+            forecastFilterState,
+            hierarchyLevel,
+            forecastMetric,
+          );
+        }
+      } else if (!legacyForecastRequest.current) {
+        loadForecastData(
           resolveForecastSheetName(workspace.sheetName),
           forecastFilterState,
-          hierarchyLevel,
-          forecastMetric,
+          forecastPart,
+          forecastHorizon,
         );
       }
       return;
     }
-    if (key === "inventory" && !inventoryPlanningRequest.current) {
-      loadInventoryPlanningData(
+    if (key === "inventory" && !legacyForecastRequest.current) {
+      loadForecastData(
         resolveForecastSheetName(workspace.sheetName),
         forecastFilterState,
+        forecastPart,
         forecastHorizon,
       );
     }
@@ -1094,49 +1211,71 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   }
 
   function exportForecastCenterCsv() {
-    if (!workbook || !workspace) return;
-    const params = buildWorkspaceParams({
-      ...forecastFilterState,
-      search: "",
-      modelYear: [],
-      part: [],
-      page: 1,
+    if (!workbook || !workspace || !validForecastOutputRun) {
+      messageApi.warning("Prepare a governed run in Output Center first.");
+      return;
+    }
+    const params = new URLSearchParams({
+      metric: forecastMetric,
+      level: hierarchyLevel,
     });
-    params.delete("page");
-    params.delete("page_size");
-    params.delete("sort_field");
-    params.delete("sort_order");
-    params.set("metric", forecastMetric);
-    params.set("level", hierarchyLevel);
-    params.set("horizon", String(forecastHorizon));
-    params.set("top_n", "10");
-    params.set("use_working_days", String(useWorkingDays));
-    params.set("use_seasonality", String(useSeasonality));
-    params.set("tariff_impact_pct", String(tariffImpactPct));
-    params.set("model_strategy", hierarchyModelStrategy);
-    params.set("min_monthly_volume", String(minimumMonthlyVolume));
     const governedForecastSheet = resolveForecastSheetName(workspace.sheetName);
     window.open(
-      `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center/export.csv?${params.toString()}`,
+      `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center/runs/${encodeURIComponent(validForecastOutputRun.metadata.runId)}/current-view.csv?${params.toString()}`,
       "_blank"
     );
   }
 
-  function exportForecastCenterXlsx() {
+  async function prepareForecastOutputRun() {
     if (!workbook || !workspace) return;
-    const params = new URLSearchParams({
-      horizon: String(forecastHorizon),
-      top_n: "10",
-      use_working_days: String(useWorkingDays),
-      use_seasonality: String(useSeasonality),
-      tariff_impact_pct: String(tariffImpactPct),
-      model_strategy: hierarchyModelStrategy,
-      min_monthly_volume: String(minimumMonthlyVolume),
-    });
+    const requestFingerprint = forecastOutputIdentityFingerprint;
+    const governedForecastSheet = resolveForecastSheetName(workspace.sheetName);
+    setForecastOutputRunLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center/runs`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brand: forecastFilterState.brand.filter((brand) => ["HMA", "GMA", "KUS"].includes(brand)),
+            model: forecastFilterState.model,
+            part: forecastFilterState.part,
+            start_date: forecastFilterState.startDate,
+            end_date: forecastFilterState.endDate,
+            horizon: forecastHorizon,
+            top_n: 10,
+            use_working_days: useWorkingDays,
+            use_seasonality: useSeasonality,
+            tariff_impact_pct: tariffImpactPct,
+            min_monthly_volume: minimumMonthlyVolume,
+            requested_strategy: hierarchyModelStrategy,
+          }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error((await response.json()).detail ?? "Failed to prepare governed output run.");
+      }
+      const payload = (await response.json()) as ForecastOutputRunPreview;
+      if (forecastOutputIdentityRef.current !== requestFingerprint) {
+        messageApi.info("Output settings changed while the run was preparing. Prepare the updated run.");
+        return;
+      }
+      setForecastOutputRun(payload);
+      messageApi.success(payload.reused ? "Reused the complete governed run." : "Governed output run is ready.");
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "Failed to prepare governed output run.");
+    } finally {
+      setForecastOutputRunLoading(false);
+    }
+  }
+
+  function downloadForecastOutput(artifact: "detailed.xlsx" | "executive-summary.pdf") {
+    if (!workbook || !workspace || !validForecastOutputRun) return;
     const governedForecastSheet = resolveForecastSheetName(workspace.sheetName);
     window.open(
-      `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center/export.xlsx?${params.toString()}`,
-      "_blank"
+      `${API_BASE_URL}/api/workbooks/${workbook.id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center/runs/${encodeURIComponent(validForecastOutputRun.metadata.runId)}/${artifact}`,
+      "_blank",
     );
   }
 
@@ -1168,13 +1307,23 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           const nextLevel = nextMetric === "wholesale_quantity" && ["plc", "model_plc"].includes(hierarchyLevel)
             ? "model"
             : hierarchyLevel;
+          const nextStrategy = nextMetric !== "revenue" && hierarchyModelStrategy === "reference_portfolio"
+            ? "auto"
+            : hierarchyModelStrategy;
           setForecastMetric(nextMetric);
-          if (nextMetric !== "revenue" && hierarchyModelStrategy === "reference_portfolio") {
-            setHierarchyModelStrategy("auto");
+          if (nextStrategy !== hierarchyModelStrategy) {
+            setHierarchyModelStrategy(nextStrategy);
           }
           setHierarchyLevel(nextLevel);
           if (workspace) {
-            loadHierarchicalForecast(workspace.sheetName, forecastFilterState, nextLevel, nextMetric);
+            loadHierarchicalForecast(
+              workspace.sheetName,
+              forecastFilterState,
+              nextLevel,
+              nextMetric,
+              forecastHorizon,
+              nextStrategy,
+            );
           }
         }}
         onLevelChange={(nextLevel) => {
@@ -1185,15 +1334,33 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         }}
         onModelStrategyChange={(strategy) => {
           setHierarchyModelStrategy(strategy);
+          setForecastOutputRun(null);
+          setInventoryPlanningData(null);
           if (strategy === "reference_portfolio") {
             setUseWorkingDays(true);
             setUseSeasonality(true);
           }
         }}
-        onWorkingDaysChange={setUseWorkingDays}
-        onSeasonalityChange={setUseSeasonality}
-        onTariffImpactChange={setTariffImpactPct}
-        onMinMonthlyVolumeChange={setMinimumMonthlyVolume}
+        onWorkingDaysChange={(value) => {
+          setUseWorkingDays(value);
+          setForecastOutputRun(null);
+          setInventoryPlanningData(null);
+        }}
+        onSeasonalityChange={(value) => {
+          setUseSeasonality(value);
+          setForecastOutputRun(null);
+          setInventoryPlanningData(null);
+        }}
+        onTariffImpactChange={(value) => {
+          setTariffImpactPct(value);
+          setForecastOutputRun(null);
+          setInventoryPlanningData(null);
+        }}
+        onMinMonthlyVolumeChange={(value) => {
+          setMinimumMonthlyVolume(value);
+          setForecastOutputRun(null);
+          setInventoryPlanningData(null);
+        }}
         onRun={() => workspace && loadHierarchicalForecast(
           workspace.sheetName,
           forecastFilterState,
@@ -1201,13 +1368,26 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           forecastMetric,
         )}
         onExportCsv={exportForecastCenterCsv}
-        onExportXlsx={exportForecastCenterXlsx}
+        currentExportReady={Boolean(validForecastOutputRun)}
+      />
+    );
+  }
+
+  function renderOutputCenterPanel() {
+    return (
+      <OutputCenterPanel
+        data={validForecastOutputRun}
+        loading={forecastOutputRunLoading}
+        onPrepare={prepareForecastOutputRun}
+        onDownloadExcel={() => downloadForecastOutput("detailed.xlsx")}
+        onDownloadPdf={() => downloadForecastOutput("executive-summary.pdf")}
       />
     );
   }
 
   function renderGovernedForecasting() {
     if (!workspace) return null;
+
     return (
       <div className="major-tab-stack">
         <Card className="content-card major-tab-intro">
@@ -1215,13 +1395,14 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             <div>
               <div className="eyebrow" style={{ marginBottom: 8 }}>Forecasting</div>
               <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                One governed forecast entry, a distinct experimental exception review, an inventory-demand preview,
+                One governed forecast entry, a governed exception review, an experimental inventory-demand preview,
                 and one centralized output hub.
               </Paragraph>
             </div>
             <Tag color="blue">Source: PIO_Sales_Data + all compatible Wholesale sheets</Tag>
           </div>
         </Card>
+
         <Tabs
           className="workspace-subtabs"
           activeKey={forecastSubTab}
@@ -1245,8 +1426,10 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   onSyncFilters={syncForecastFromTable}
                   onHorizonChange={(value) => {
                     setForecastHorizon(value);
+                    setForecastOutputRun(null);
+                    setInventoryPlanningData(null);
                     loadHierarchicalForecast(
-                      workspace.sheetName,
+                      resolveForecastSheetName(workspace.sheetName),
                       forecastFilterState,
                       hierarchyLevel,
                       forecastMetric,
@@ -1268,9 +1451,14 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               ),
               children: (
                 <ExceptionsPanel
-                  data={anomalyData}
-                  loading={anomalyLoading}
-                  onRefresh={() => loadAnomalyData(workspace.sheetName, forecastFilterState)}
+                  data={forecastCenterData}
+                  loading={hierarchicalForecastLoading}
+                  onRefresh={() => loadHierarchicalForecast(
+                    resolveForecastSheetName(workspace.sheetName),
+                    forecastFilterState,
+                    hierarchyLevel,
+                    forecastMetric,
+                  )}
                 />
               ),
             },
@@ -1286,7 +1474,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 <InventoryPlanningPanel
                   data={inventoryPlanningData}
                   loading={inventoryPlanningLoading}
-                  onRefresh={() => loadInventoryPlanningData(workspace.sheetName, forecastFilterState)}
+                  onRefresh={() => loadInventoryPlanningData(
+                    resolveForecastSheetName(workspace.sheetName),
+                    forecastFilterState,
+                    forecastHorizon,
+                  )}
                 />
               ),
             },
@@ -1298,12 +1490,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   <small>Downloads</small>
                 </span>
               ),
-              children: (
-                <OutputCenterPanel
-                  onExportCsv={exportForecastCenterCsv}
-                  onExportXlsx={exportForecastCenterXlsx}
-                />
-              ),
+              children: renderOutputCenterPanel(),
             },
           ]}
         />
@@ -2979,11 +3166,13 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                         <div>
                           <Space wrap className="major-tab-actions">
                             {forecastData?.selectedPart ? <Tag color="blue">Focus part: {forecastData.selectedPart}</Tag> : null}
-                            <Button onClick={exportForecastCsv} disabled={!forecastData}>
-                              Export Forecast CSV
-                            </Button>
-                            <Button type="primary" onClick={exportForecastXlsx} disabled={!forecastData}>
-                              Export Forecast Excel
+                            <Button
+                              onClick={() => {
+                                setForecastSubTab("forecast");
+                                setForecastView("output");
+                              }}
+                            >
+                              Open Output Center
                             </Button>
                           </Space>
                           <div style={{ marginTop: 6, color: "#6b7b95", fontSize: 12, textAlign: "right" }}>
@@ -3304,7 +3493,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               value={forecastView}
                               options={[
                                 { label: "Forecast Center", value: "hierarchy" },
-                                { label: "Output", value: "output" },
+                                { label: "Output Center", value: "output" },
                                 { label: "Detail", value: "detail" },
                                 { label: "Leaderboard", value: "leaderboard" },
                                 { label: "Series Table", value: "series" },
@@ -3325,7 +3514,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                   };
                                   setForecastFilterState(hierarchyState);
                                   loadHierarchicalForecast(workspace.sheetName, hierarchyState);
-                                } else if (workspace) {
+                                } else if (value !== "output" && workspace) {
                                   const partState = {
                                     ...forecastFilterState,
                                     brand: forecastFilterState.brand.filter((brand) =>
@@ -3349,7 +3538,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                           </Space>
                         </div>
                         <div className="toolbar-grid">
-                          {forecastView !== "hierarchy" ? (
+                          {!["hierarchy", "output"].includes(forecastView) ? (
                             <Input
                               allowClear
                               prefix={<SearchOutlined />}
@@ -3400,7 +3589,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                             }))}
                             onChange={(value) => applyForecastFilters({ model: value })}
                           />
-                          {forecastView !== "hierarchy" ? (
+                          {!["hierarchy", "output"].includes(forecastView) ? (
                             <Select
                               mode="multiple"
                               allowClear
@@ -3429,7 +3618,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               })
                             }
                           />
-                          {forecastView !== "hierarchy" ? (
+                          {!["hierarchy", "output"].includes(forecastView) ? (
                             <Select
                               showSearch
                               style={{ minWidth: 320 }}
@@ -3465,6 +3654,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                   forecastMetric,
                                   value,
                                 );
+                              } else if (forecastView === "output") {
+                                setForecastOutputRun(null);
                               } else {
                                 loadForecastData(workspace.sheetName, forecastFilterState, forecastPart, value);
                               }
@@ -3476,6 +3667,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
                     {forecastView === "hierarchy" ? (
                       renderForecastCenterPanel()
+                    ) : forecastView === "output" ? (
+                      renderOutputCenterPanel()
                     ) : forecastLoading ? (
                       <div className="loading-shell" style={{ minHeight: "40vh" }}>
                         <div className="loading-card">
@@ -3485,7 +3678,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                       </div>
                     ) : forecastData ? (
                       <>
-                        {forecastView !== "hierarchy" ? (
+                        {!["hierarchy", "output"].includes(forecastView) ? (
                           <Row gutter={[18, 18]}>
                           <Col xs={24} md={12} xl={6}>
                             <Card className="metric-card">
@@ -3510,7 +3703,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                           </Row>
                         ) : null}
 
-                        {forecastView === "output" ? (
+                        {forecastView === "legacy_output" ? (
                           <div className="tab-stack">
                             <Card
                               className="content-card"
@@ -3518,7 +3711,14 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               extra={(
                                 <Space wrap>
                                   <Button icon={<DownloadOutlined />} onClick={exportForecastCenterCsv}>Current view CSV</Button>
-                                  <Button type="primary" icon={<DownloadOutlined />} onClick={exportForecastCenterXlsx}>Download SOP Excel</Button>
+                                  <Button
+                                    type="primary"
+                                    icon={<DownloadOutlined />}
+                                    disabled={!validForecastOutputRun}
+                                    onClick={() => downloadForecastOutput("detailed.xlsx")}
+                                  >
+                                    Download SOP Excel
+                                  </Button>
                                 </Space>
                               )}
                             >
