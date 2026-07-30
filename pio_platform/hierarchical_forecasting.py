@@ -203,6 +203,8 @@ def build_hierarchical_forecast(
             "accuracyPct": _accuracy_pct(evaluation["wape"]),
             "mae": evaluation["mae"],
             "bias": evaluation["bias"],
+            "applicationRecentH1Rows": evaluation["rows"],
+            "rollingOriginResiduals": [],
             "forecast": [
                 {"month": month.strftime("%Y-%m"), "value": float(value)}
                 for month, value in zip(future_months, forecast_values, strict=False)
@@ -356,6 +358,7 @@ def _independent_outer_backtest(
     )
     predictions: list[float] = []
     actuals: list[float] = []
+    rows: list[dict[str, Any]] = []
     for index in range(split, len(values)):
         expanding = values.iloc[:index]
         if model_strategy == "reference_portfolio":
@@ -379,6 +382,16 @@ def _independent_outer_backtest(
             prediction = forecast_history(processed, horizon=1, model_name=selection["model"])[0]
         predictions.append(max(0.0, float(prediction)))
         actuals.append(float(values.iloc[index]))
+        rows.append(
+            {
+                "origin_month": str(pd.Timestamp(values.index[index - 1]).to_period("M")),
+                "target_month": str(pd.Timestamp(values.index[index]).to_period("M")),
+                "horizon": 1,
+                "actual": float(values.iloc[index]),
+                "prediction": max(0.0, float(prediction)),
+                "entity": entity,
+            }
+        )
 
     absolute_error = sum(abs(predicted - actual) for predicted, actual in zip(predictions, actuals, strict=False))
     actual_sum = sum(actuals)
@@ -391,7 +404,65 @@ def _independent_outer_backtest(
         "wape": float(absolute_error / actual_sum) if actual_sum > 0 else None,
         "mae": float(absolute_error / len(actuals)) if actuals else None,
         "bias": float((predicted_sum - actual_sum) / actual_sum) if actual_sum > 0 else None,
+        "rows": rows,
     }
+
+
+def rolling_origin_residuals(
+    series: pd.Series,
+    working_day_map: dict[str, float],
+    *,
+    entity: str,
+    use_working_days: bool,
+    use_seasonality: bool,
+    model_strategy: str,
+    minimum_training_months: int = 24,
+    horizons: tuple[int, ...] = (1, 2, 3),
+) -> list[dict[str, Any]]:
+    """Return complete H1/H2/H3 held-out rows for interval calibration."""
+
+    values = series.astype(float)
+    if len(values) <= minimum_training_months:
+        return []
+    rows: list[dict[str, Any]] = []
+    max_horizon = max(horizons)
+    for training_end in range(minimum_training_months, len(values)):
+        available_horizons = [
+            horizon
+            for horizon in horizons
+            if training_end + horizon - 1 < len(values)
+        ]
+        if not available_horizons:
+            continue
+        training = values.iloc[:training_end]
+        requested_horizon = min(max_horizon, max(available_horizons))
+        selection = _select_forecast_candidate(
+            training,
+            working_day_map,
+            entity=entity,
+            horizon=requested_horizon,
+            use_working_days=use_working_days,
+            use_seasonality=use_seasonality,
+            model_strategy=model_strategy,
+        )
+        forecasts = selection["forecast"]
+        origin = pd.Timestamp(values.index[training_end - 1]).to_period("M")
+        for horizon in available_horizons:
+            target_position = training_end + horizon - 1
+            rows.append(
+                {
+                    "origin_month": str(origin),
+                    "target_month": str(
+                        pd.Timestamp(values.index[target_position]).to_period("M")
+                    ),
+                    "horizon": horizon,
+                    "actual": float(values.iloc[target_position]),
+                    "prediction": max(0.0, float(forecasts[horizon - 1])),
+                    "entity": entity,
+                    "backtest_model": selection["model"],
+                }
+            )
+    return rows
 
 
 def _reference_portfolio_selection(
@@ -484,6 +555,7 @@ def _empty_backtest() -> dict[str, Any]:
         "wape": None,
         "mae": None,
         "bias": None,
+        "rows": [],
     }
 
 

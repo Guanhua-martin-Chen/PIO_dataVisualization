@@ -1,15 +1,29 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.2.0",
   "contractVersion": "pio-backtest-v1",
-  "asOf": "2026-07-27",
+  "asOf": "2026-07-29",
   "purpose": "Machine-readable inventory of production, reference, challenger, and diagnostic forecasting methods.",
   "sources": {
     "current": {
-      "path": "C:\\Users\\Lenovo\\Desktop\\PIO\\CapStone_Sales_Data_0722+PLC.xlsx",
-      "sha256": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
-      "pioRows": 478125,
-      "actualThrough": "2026-07-22",
-      "completedTrainingThrough": "2026-06-30"
+      "path": "work/canonical_data/CapStone_Sales_Data_0722+PLC_merged_through_0728.xlsx",
+      "sha256": "9ff30f6bf08f9b631042f74e8a345d36cb7e4b46981f6acbf9169279851b54b9",
+      "pioRows": 480984,
+      "actualThrough": "2026-07-28",
+      "completedTrainingThrough": "2026-06-30",
+      "lineage": "7/28 source historical description/PLC corrections plus July 2026 Wholesale/Fleet updates and 2,859 PIO rows dated 2026-07-23 through 2026-07-28",
+      "dataQualityCorrections": {
+        "HBF14AC000": {
+          "partDescription": "Carpet Floor Mat",
+          "plc": "Carpet Floor Mat",
+          "rowCount": 714,
+          "createsNewPlcCategory": false
+        }
+      },
+      "retainedAuditItems": {
+        "cargoMatRows": 27706,
+        "cargoMatDistinctParts": 61,
+        "K5F33AU000": "949 rows have Part Description Bed Mat and PLC Cargo Mat; retained pending explicit business validation"
+      }
     },
     "reference": {
       "path": "C:\\Users\\Lenovo\\Desktop\\PIO\\PIO_Forecast_Output_20260715_v2.xlsx",
@@ -22,6 +36,7 @@
     }
   },
   "evaluationContract": {
+    "evaluationScopeId": "governed_h123_24m_h1_18_h2_17_h3_16_official_total_51",
     "foldType": "expanding_rolling_origin",
     "minimumTrainingMonths": 24,
     "horizons": [1, 2, 3],
@@ -32,6 +47,8 @@
       "combined": 51
     },
     "primaryMetric": "wape",
+    "primaryHorizon": 1,
+    "horizonPriority": [1, 2, 3],
     "accuracyProxy": "max(0, 1 - wape)",
     "secondaryMetrics": [
       "mae",
@@ -42,14 +59,104 @@
       "fold_count"
     ],
     "officialPortfolioAggregation": "sum HMA/GMA/KUS predictions and actuals on common origin-horizon rows before calculating errors",
-    "selectionRule": "minimum WAPE; within 0.01 absolute WAPE prefer lower absolute bias, then lower fold-WAPE standard deviation, then lower complexity",
+    "tieBandWape": 0.005,
+    "selectionRule": "minimum WAPE; within 0.005 absolute WAPE prefer lower absolute bias, then lower fold-WAPE standard deviation, then lower complexity",
+    "complexModelPolicy": "prefer the simpler easier-to-explain model when a more complex challenger gains no more than 0.5 WAPE percentage point on identical governed folds",
     "partialMonthPolicy": "exclude current partial month from pre-month model training and evaluate cutoff nowcast separately"
+  },
+  "kusChannelContract": {
+    "status": "approved_for_next_governed_implementation",
+    "effectiveMonth": "2026-06",
+    "preEffectiveRule": "vehicle wholesale volume * PNVW = KUS MPI revenue",
+    "wholesaleRule": "wholesale vehicle volume * wholesale PNVW = wholesale MPI revenue",
+    "fleetRule": "fleet vehicle volume * Carpet Floor Mat PNVW = fleet MPI revenue",
+    "totalRule": "wholesale MPI revenue + fleet MPI revenue = KUS forecast/nowcast",
+    "eligiblePioScope": {
+      "anchor": "KUS",
+      "plc": "Carpet Floor Mat",
+      "modelYear": "2027"
+    },
+    "allocationOrder": "fleet first at 100% penetration, then residual eligible Carpet Floor Mat volume to wholesale",
+    "doubleCountingPolicy": "a vehicle and its MPI revenue may belong to exactly one basket"
+  },
+  "evaluationScopes": {
+    "application_recent_h1": {
+      "horizons": [1],
+      "minimumPointsPerBrand": 3,
+      "maximumPointsPerBrand": 6,
+      "rowSemantics": "brand prediction rows",
+      "aggregation": "selected Brand rows; not Official Total common-fold scoring",
+      "validationStatus": "legacy_application_diagnostic",
+      "comparableToGovernedH123": false
+    },
+    "governed_h123_24m_h1_18_h2_17_h3_16_official_total_51": {
+      "horizons": [1, 2, 3],
+      "minimumTrainingMonths": 24,
+      "foldCounts": {"1": 18, "2": 17, "3": 16, "combined": 51},
+      "rowSemantics": "Official Total common origin-horizon rows",
+      "aggregation": "sum HMA/GMA/KUS on every common fold before WAPE",
+      "coverage": "complete unfiltered HMA/GMA/KUS",
+      "evidenceGate": [
+        "exact source hash",
+        "PIO Revenue target",
+        "completed training cutoff 2026-06",
+        "unfiltered HMA/GMA/KUS",
+        "Official Total aggregation",
+        "pio-backtest-v1 contract",
+        "exact H1/H2/H3 fold counts and 51 fold keys",
+        "100% registered prediction coverage"
+      ]
+    }
+  },
+  "intervalContract": {
+    "method": "horizon-specific held-out rolling-origin absolute residual quantiles",
+    "nominalCoverage": 0.9,
+    "ordering": "0 <= lower <= point <= upper",
+    "requiredMetadata": [
+      "nominalCoverage",
+      "empiricalCoverage",
+      "coverageSampleCount",
+      "calibrationResidualCount",
+      "calibrationScopeId",
+      "validationStatus"
+    ],
+    "brandAndOfficialTotalPolicy": "validated only with sufficient held-out residuals at that grain",
+    "childPolicy": "Model, PLC, and PIS_PNO intervals remain unvalidated until held-out child coverage is tested; they cannot inherit Brand empirical coverage",
+    "strategyMatchPolicy": "every residual uses the deployed strategy at that origin; Auto selection is fold-local",
+    "nowcastPolicy": "unvalidated_nowcast unless cutoff-specific historical residuals exist",
+    "cacheScope": "source hash plus fact signature, cutoff, target, strategy, full filter scope, working-day signature, and forecast settings"
+  },
+  "forecastExceptionSchema": {
+    "requiredFields": [
+      "reasonCode",
+      "severity",
+      "scope",
+      "grain",
+      "seriesKey",
+      "entityKey",
+      "forecastMonth",
+      "evidence",
+      "suggestedAction"
+    ],
+    "reasonCodes": [
+      "inactive_discontinued",
+      "low_volume",
+      "insufficient_active_months",
+      "history_gaps",
+      "recent_zero_streak",
+      "new_reintroduced_proxy",
+      "zero_forecast_historical_unit_price",
+      "planner_review_residual"
+    ],
+    "cutoffPolicy": "evidence may use only data known at the request cutoff"
   },
   "latestUnifiedRun": {
     "generatedFrom": "CapStone_Sales_Data_0722+PLC.xlsx",
     "sourceSha256": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
     "completedTrainingThrough": "2026-06",
     "resultPath": "outputs/backtests/unified_backtest_f44048f30632_pio-backtest-v1.json",
+    "currentSourceRerunRequired": true,
+    "validationStatus": "historical_7_22_evidence_not_validated_for_current_7_28_source",
     "commonFoldCount": 51,
     "officialTotalResults": {
       "referenceRevenueProxy": {
@@ -85,6 +192,8 @@
         "biasPercentage": 0.026773359393689182
       },
       "referenceQuantityTotalEtsProxy": {
+        "evidenceStatus": "invalid_superseded",
+        "supersededReason": "The prior run did not pass predictor=make_predictor('ets_additive') explicitly; retain values only as audit history until a safe corrected rerun is completed.",
         "wape": 0.08976328552451446,
         "accuracy": 0.9102367144754855,
         "biasPercentage": 0.012065385700036922
@@ -95,7 +204,7 @@
         "biasPercentage": 0.00137438514685685
       }
     },
-    "interpretation": "On the current 7/22 source and one common contract, the rebuilt reference Revenue portfolio is the validated champion at 6.8939% official-total WAPE. It uses the validated HMA Holt-Winters candidate, GMA naive_last, and KUS working_day_adjusted_seasonal. Auto remains the website default pending explicit user approval."
+    "interpretation": "On the historical 7/22 source and one common contract, the rebuilt reference Revenue portfolio was the validated champion at 6.8939% official-total WAPE. These metrics are not validated for the current 7/28 source until the unified harness is rerun. It used the validated HMA Holt-Winters candidate, GMA naive_last, and KUS working_day_adjusted_seasonal. Auto remains the website default pending explicit user approval."
   },
   "latestHmaEtsExperiment": {
     "sourceSha256": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
@@ -126,6 +235,7 @@
   "models": [
     {
       "id": "current_auto_brand_anchor",
+      "evaluationScopeId": "application_recent_h1",
       "status": "implemented",
       "target": "pio_revenue",
       "level": "brand",
@@ -142,6 +252,7 @@
     },
     {
       "id": "reference_revenue_portfolio_v2",
+      "evaluationScopeId": "governed_h123_24m_h1_18_h2_17_h3_16_official_total_51",
       "status": "specification_only",
       "target": "pio_revenue",
       "level": "official_total_from_brand_anchors",
@@ -168,6 +279,7 @@
     },
     {
       "id": "rebuilt_reference_portfolio_v1",
+      "evaluationScopeId": "governed_h123_24m_h1_18_h2_17_h3_16_official_total_51",
       "status": "implemented",
       "promotionStatus": "champion",
       "productionDefault": false,
@@ -192,7 +304,10 @@
         "preprocessing": "robust_winsorized"
       },
       "reportedEvidence": {
-        "scope": "current 7/22 source, pio-backtest-v1, common H1-H3 folds",
+        "scope": "merged-through-7/28 source, training cutoff 2026-06, pio-backtest-v1, common H1-H3 folds",
+        "sourceHash": "9ff30f6bf08f9b631042f74e8a345d36cb7e4b46981f6acbf9169279851b54b9",
+        "specificationSourceHash": "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47",
+        "sourceTransferResult": "identical governed metrics; no improvement and no degradation",
         "officialTotalWape": 0.06893887801948267,
         "officialTotalAccuracy": 0.9310611219805174,
         "officialTotalBiasPercentage": 0.010737313740393228,
@@ -219,7 +334,33 @@
       ]
     },
     {
+      "id": "repository_additive_ets_reference_proxy",
+      "status": "diagnostic_only",
+      "productionDefault": false,
+      "evaluationScopeId": "governed_h123_24m_h1_18_h2_17_h3_16_official_total_51",
+      "comparisonType": "isolated_hma_ets_comparison",
+      "target": "pio_revenue",
+      "level": "official_total_from_brand_anchors",
+      "implementation": "scripts/run_unified_backtest.py referenceRevenueProxy",
+      "brandModels": {
+        "HMA": "ets_additive",
+        "GMA": "naive_last",
+        "KUS": "working_day_adjusted_seasonal"
+      },
+      "reportedEvidence": {
+        "scope": "merged-through-7/28 source, cutoff 2026-06, pio-backtest-v1, 51 common H1-H3 Official Total folds",
+        "sourceHash": "9ff30f6bf08f9b631042f74e8a345d36cb7e4b46981f6acbf9169279851b54b9",
+        "officialTotalWape": 0.10037709985878922,
+        "officialTotalAccuracy": 0.8996229001412108,
+        "officialTotalBiasPercentage": 0.020333017400054765,
+        "foldCount": 51,
+        "predictionCoverage": 1.0
+      },
+      "disclosure": "Only HMA changes versus the validated reference portfolio comparison. GMA and KUS remain unchanged; this is not forced ETS across all Brands."
+    },
+    {
       "id": "legacy_revenue_frozen_brand_models",
+      "evaluationScopeId": "governed_h123_24m_h1_18_h2_17_h3_16_official_total_51",
       "status": "implemented",
       "target": "pio_revenue",
       "level": "official_total_from_brand_anchors",
@@ -229,7 +370,7 @@
         "KUS": "seasonal_mean"
       },
       "reportedEvidence": {
-        "scope": "current 7/22 source, pio-backtest-v1, common H1-H3 folds",
+        "scope": "historical 7/22 source, pio-backtest-v1, common H1-H3 folds",
         "officialTotalWape": 0.09346574894088648,
         "officialTotalAccuracy": 0.9065342510591136,
         "foldCount": 51
@@ -359,7 +500,7 @@
     "same source hash and cutoff contract",
     "same outer folds and horizons",
     "no future-target or oracle-driver leakage",
-    "better WAPE outside the 0.01 tie band or wins documented tie-breaks",
+    "better WAPE outside the 0.005 tie band or wins documented tie-breaks",
     "acceptable bias, stability, and coverage",
     "hierarchy reconciliation passes",
     "independent allocation accuracy is reported where applicable",

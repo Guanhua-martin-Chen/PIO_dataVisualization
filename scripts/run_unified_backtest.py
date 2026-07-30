@@ -22,6 +22,7 @@ from pio_platform.backtest_harness import (  # noqa: E402
     self_test,
     summarize_predictions,
     predictions_to_frame,
+    make_predictor,
 )
 from pio_platform.data_loader import load_dataset  # noqa: E402
 from pio_platform.fact_table import (  # noqa: E402
@@ -30,7 +31,12 @@ from pio_platform.fact_table import (  # noqa: E402
 )
 
 
-DEFAULT_SOURCE = Path(r"C:\Users\Lenovo\Desktop\PIO\CapStone_Sales_Data_0722+PLC.xlsx")
+DEFAULT_SOURCE = (
+    PROJECT_ROOT
+    / "work"
+    / "canonical_data"
+    / "CapStone_Sales_Data_0722+PLC_merged_through_0728.xlsx"
+)
 PIO_SHEET = "PIO_Sales_Data"
 WHOLESALE_SHEETS = (
     "Vehicle_Wholesale_Data",
@@ -81,7 +87,7 @@ def main() -> int:
         },
         "warnings": [
             "Reference Revenue uses the repository ets_additive as an implementation proxy; exact reference ETS fitting code is unavailable.",
-            "Results on the 7/22 source are not exact reproductions of the reference workbook generated from the 7/15 source snapshot.",
+            "Results on the governed 7/28 source are not exact reproductions of the reference workbook generated from the 7/15 source snapshot.",
             "July partial actual is excluded from pre-month backtests; cutoff-specific nowcast requires daily historical cutoff rows.",
         ],
         "runs": {},
@@ -142,6 +148,7 @@ def main() -> int:
         level="official_total",
         entity="TOTAL",
         contract=contract,
+        predictor=make_predictor("ets_additive"),
         source_hash=source_hash,
     )
     quantity_ets_frame = predictions_to_frame(quantity_ets_rows)
@@ -149,6 +156,8 @@ def main() -> int:
         "contract": contract.__dict__,
         "modelId": "reference_quantity_total_ets_v2_proxy",
         "target": "pio_quantity",
+        "evidenceStatus": "corrected_proxy_run",
+        "supersedes": "prior quantity proxy metrics produced without an explicit ets_additive predictor",
         "officialTotalMetrics": summarize_predictions(quantity_ets_frame),
         "predictions": quantity_ets_frame.to_dict(orient="records"),
     }
@@ -292,6 +301,13 @@ def load_governed_monthly(
 
     working_bundle = load_dataset(file_bytes, WORKING_DAYS_SHEET)
     working_days = working_days_map(working_bundle.dataframe)
+    if not working_days:
+        working_days = load_working_days_only(source)
+    if not working_days:
+        raise RuntimeError(
+            "Working_Days could not be parsed from either the governed loader "
+            "or the direct calendar-sheet fallback."
+        )
     payload = {
         "pioRevenue": revenue,
         "pioQuantity": quantity,

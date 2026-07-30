@@ -583,6 +583,7 @@ def get_forecast_center(
         end_date,
     )
     try:
+        filters_applied = bool(brand or model or part or start_date or end_date)
         return build_forecast_center(
             facts,
             _working_days_long(session, sheet_name),
@@ -599,6 +600,25 @@ def get_forecast_center(
             latest_sales_month_is_complete=latest_month_is_complete,
             latest_sales_date=latest_sales_date,
             source_hash=_workbook_sha256(session.file_bytes),
+            evaluation_scope_eligible=not filters_applied,
+            evaluation_scope_metadata={
+                "filtersApplied": filters_applied,
+                "brand": list(brand),
+                "model": list(model),
+                "part": list(part),
+                "startDate": start_date,
+                "endDate": end_date,
+                "requestCutoff": (
+                    str(
+                        latest_sales_date.to_period("M")
+                        if latest_month_is_complete
+                        else latest_sales_date.to_period("M") - 1
+                    )
+                    if latest_sales_date is not None
+                    else None
+                ),
+                "target": metric,
+            },
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -656,6 +676,22 @@ def export_forecast_center_csv(
         latest_sales_month_is_complete=latest_month_is_complete,
         latest_sales_date=latest_sales_date,
         source_hash=_workbook_sha256(session.file_bytes),
+        evaluation_scope_eligible=not bool(
+            brand or model or part or start_date or end_date
+        ),
+        evaluation_scope_metadata={
+            "filtersApplied": bool(brand or model or part or start_date or end_date),
+            "requestCutoff": (
+                str(
+                    latest_sales_date.to_period("M")
+                    if latest_month_is_complete
+                    else latest_sales_date.to_period("M") - 1
+                )
+                if latest_sales_date is not None
+                else None
+            ),
+            "target": metric,
+        },
     )
     rows: list[dict[str, Any]] = []
     for record in payload["records"]:
@@ -718,6 +754,20 @@ def export_forecast_center_xlsx(
         "tariff_impact_pct": tariff_impact_pct,
         "model_strategy": model_strategy,
         "min_monthly_volume": min_monthly_volume,
+        "evaluation_scope_eligible": True,
+        "evaluation_scope_metadata": {
+            "filtersApplied": False,
+            "requestCutoff": (
+                str(
+                    latest_date.to_period("M")
+                    if latest_complete
+                    else latest_date.to_period("M") - 1
+                )
+                if latest_date is not None
+                else None
+            ),
+            "target": "revenue",
+        },
     }
     revenue = build_forecast_center(
         facts,

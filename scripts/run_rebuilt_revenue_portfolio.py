@@ -36,18 +36,12 @@ from scripts.run_unified_backtest import (  # noqa: E402
 )
 
 
-SOURCE_HASH = "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47"
+EXPERIMENT_SOURCE_HASH = "f44048f30632e6f1d77d5336d2d313b4855e9d1cec95577b4a50f1c8f33c2c47"
 DEFAULT_EXPERIMENT = (
     PROJECT_ROOT
     / "outputs"
     / "backtests"
-    / f"hma_ets_experiment_{SOURCE_HASH[:12]}_{CONTRACT_VERSION}.json"
-)
-DEFAULT_OUTPUT = (
-    PROJECT_ROOT
-    / "outputs"
-    / "backtests"
-    / f"rebuilt_revenue_portfolio_{SOURCE_HASH[:12]}_{CONTRACT_VERSION}.json"
+    / f"hma_ets_experiment_{EXPERIMENT_SOURCE_HASH[:12]}_{CONTRACT_VERSION}.json"
 )
 OFFICIAL_ANCHORS = ("HMA", "GMA", "KUS")
 
@@ -58,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--hma-experiment", type=Path, default=DEFAULT_EXPERIMENT)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
 
@@ -66,8 +60,12 @@ def main() -> int:
     args = parse_args()
     source = args.source.resolve()
     actual_hash = sha256_file(source)
-    if actual_hash != SOURCE_HASH:
-        raise RuntimeError(f"Source hash mismatch: {actual_hash}")
+    output_path = args.output or (
+        PROJECT_ROOT
+        / "outputs"
+        / "backtests"
+        / f"rebuilt_revenue_portfolio_{actual_hash[:12]}_{CONTRACT_VERSION}.json"
+    )
 
     governed = load_governed_monthly(source, actual_hash, use_cache=True)
     if not governed.get("workingDays"):
@@ -190,7 +188,10 @@ def main() -> int:
         runs,
         hma_audit,
         champion_summary,
-        registry_updated=_registry_has_champion(),
+        registry_updated=(
+            _registry_has_champion()
+            and actual_hash == EXPERIMENT_SOURCE_HASH
+        ),
     )
 
     output = {
@@ -204,21 +205,31 @@ def main() -> int:
             "workingDaysCount": len(working_days),
             "rawExcelReadScope": "Working_Days sheet only when repairing empty governed cache",
         },
+        "modelSpecificationTransfer": {
+            "specificationSourceSha256": EXPERIMENT_SOURCE_HASH,
+            "evaluationSourceSha256": actual_hash,
+            "status": (
+                "same_source"
+                if actual_hash == EXPERIMENT_SOURCE_HASH
+                else "fixed_validated_spec_retrained_and_rebacktested_on_new_source"
+            ),
+            "registeredMetricsEligible": actual_hash == EXPERIMENT_SOURCE_HASH,
+        },
         "hmaCandidate": champion_summary,
         "hmaLeakageAudit": hma_audit,
         "runs": runs,
         "selection": selection,
         "promotionDecision": promotion,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(output, indent=2, ensure_ascii=False, default=_json_default),
         encoding="utf-8",
     )
     print(
         json.dumps(
             {
-                "output": str(args.output.resolve()),
+                "output": str(output_path.resolve()),
                 "hmaCandidate": champion_id,
                 "officialTotals": {
                     name: {
