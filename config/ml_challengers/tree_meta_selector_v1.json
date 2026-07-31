@@ -1,0 +1,1669 @@
+{
+  "artifactVersion": "pio-ml-challenger-v2-preregistered",
+  "modelId": "tree_meta_selector_v1",
+  "displayName": "Tree Meta-Selector v1",
+  "status": "challenger",
+  "productionDefault": false,
+  "target": "pio_revenue",
+  "level": "official_total_from_brand_anchors",
+  "sourceHash": "9ff30f6bf08f9b631042f74e8a345d36cb7e4b46981f6acbf9169279851b54b9",
+  "trainingCutoff": "2026-06",
+  "contract": {
+    "version": "pio-backtest-v1",
+    "minimum_training_months": 24,
+    "horizons": [
+      1,
+      2,
+      3
+    ],
+    "tie_band_wape": 0.005,
+    "primary_metric": "wape",
+    "fold_type": "expanding_rolling_origin"
+  },
+  "featureNames": [
+    "log_anchor",
+    "log_lag1",
+    "log_lag2",
+    "log_lag3",
+    "log_lag12",
+    "log_rolling3_mean",
+    "log_rolling6_mean",
+    "trend6_scaled",
+    "volatility6",
+    "seasonal_ratio",
+    "zero_share12",
+    "working_day_ratio",
+    "known_working_days_scaled",
+    "entity_gma",
+    "entity_kus",
+    "kus_working_day_ratio",
+    "kus_seasonal_ratio",
+    "hma_trend6_scaled",
+    "hma_month_sin",
+    "hma_month_cos",
+    "gma_month_sin",
+    "gma_month_cos",
+    "kus_month_sin",
+    "kus_month_cos",
+    "hma_horizon_scaled",
+    "gma_horizon_scaled",
+    "kus_horizon_scaled"
+  ],
+  "featureAvailability": [
+    {
+      "features": [
+        "log_lag1",
+        "log_lag2",
+        "log_lag3",
+        "log_lag12",
+        "log_rolling3_mean",
+        "log_rolling6_mean",
+        "trend6_scaled",
+        "volatility6",
+        "seasonal_ratio",
+        "zero_share12"
+      ],
+      "knownAt": "forecast origin",
+      "source": "completed target history only"
+    },
+    {
+      "features": [
+        "hma_month_sin",
+        "hma_month_cos",
+        "gma_month_sin",
+        "gma_month_cos",
+        "kus_month_sin",
+        "kus_month_cos",
+        "hma_horizon_scaled",
+        "gma_horizon_scaled",
+        "kus_horizon_scaled"
+      ],
+      "knownAt": "forecast origin",
+      "source": "Brand x target-month and Brand x horizon interactions"
+    },
+    {
+      "features": [
+        "working_day_ratio",
+        "known_working_days_scaled",
+        "kus_working_day_ratio"
+      ],
+      "knownAt": "forecast origin",
+      "source": "supplied future Working_Days calendar"
+    },
+    {
+      "features": [
+        "log_anchor"
+      ],
+      "knownAt": "forecast origin",
+      "source": "governed statistical anchor forecast"
+    },
+    {
+      "features": [
+        "entity_gma",
+        "entity_kus"
+      ],
+      "knownAt": "static",
+      "source": "official HMA/GMA/KUS anchor identity"
+    },
+    {
+      "features": [
+        "kus_seasonal_ratio",
+        "hma_trend6_scaled"
+      ],
+      "knownAt": "forecast origin",
+      "source": "Brand-specific completed-history interactions"
+    }
+  ],
+  "excludedFeatures": [
+    "target-month actual PIO",
+    "same-month realized Wholesale",
+    "same-month realized Fleet",
+    "partial-month July actual",
+    "reference workbook forecast values"
+  ],
+  "preregisteredTuning": {
+    "runPolicy": "one frozen implementation followed by one complete outer backtest",
+    "safeMinimumWapeGain": 0.005,
+    "treeAnchorWeights": [
+      1.0,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "elasticAlphaGrid": [
+      0.001,
+      0.01,
+      0.05,
+      0.1,
+      0.2,
+      0.5
+    ],
+    "elasticL1RatioGrid": [
+      0.25,
+      0.5,
+      0.75
+    ],
+    "elasticResidualClips": [
+      0.05,
+      0.1,
+      0.15
+    ],
+    "elasticNoCorrectionCandidate": true,
+    "innerValidationOrigins": 6,
+    "selectionMetric": "Official Total dollar WAPE"
+  },
+  "nestedEvaluation": {
+    "outerSplit": "expanding rolling-origin H1/H2/H3",
+    "innerLabels": "candidate dollar-error improvements and residual targets whose target month is strictly earlier than the outer origin",
+    "globalPanel": "HMA/GMA/KUS synchronized by origin",
+    "randomSplit": false,
+    "failedFoldPolicy": "retain every fold; cold start falls back to governed anchor"
+  },
+  "model": {
+    "kind": "safe_anchor_blend_tree",
+    "tree": {
+      "featureIndex": 8,
+      "featureName": "volatility6",
+      "threshold": 0.09698633286136027,
+      "samples": 153,
+      "parentPolicy": {
+        "leaf": "reference_anchor",
+        "alternativeMethod": "reference_anchor",
+        "anchorWeight": 1.0,
+        "samples": 153,
+        "anchorAbsoluteError": 139868797.19736326,
+        "policyAbsoluteError": 139868797.19736326,
+        "predictedWapeGain": 0.0,
+        "positiveImprovementShare": 0.0,
+        "safeSwitchActivated": false
+      },
+      "dollarAbsoluteErrorGain": 10435688.46223852,
+      "left": {
+        "featureIndex": 2,
+        "featureName": "log_lag2",
+        "threshold": 16.787593802462418,
+        "samples": 42,
+        "parentPolicy": {
+          "leaf": "reference_anchor",
+          "alternativeMethod": "reference_anchor",
+          "anchorWeight": 1.0,
+          "samples": 42,
+          "anchorAbsoluteError": 48364870.39563914,
+          "policyAbsoluteError": 48364870.39563914,
+          "predictedWapeGain": 0.0,
+          "positiveImprovementShare": 0.0,
+          "safeSwitchActivated": false
+        },
+        "dollarAbsoluteErrorGain": 4401748.112506583,
+        "left": {
+          "leaf": "reference_anchor",
+          "alternativeMethod": "reference_anchor",
+          "anchorWeight": 1.0,
+          "samples": 36,
+          "anchorAbsoluteError": 30262171.376711965,
+          "policyAbsoluteError": 30262171.376711965,
+          "predictedWapeGain": 0.0,
+          "positiveImprovementShare": 0.0,
+          "safeSwitchActivated": false
+        },
+        "right": {
+          "leaf": "anchor_blend",
+          "alternativeMethod": "seasonal_naive",
+          "anchorWeight": 0.7,
+          "samples": 6,
+          "anchorAbsoluteError": 18102699.018927164,
+          "policyAbsoluteError": 13700950.906420588,
+          "predictedWapeGain": 0.046429253714330196,
+          "positiveImprovementShare": 0.8333333333333334,
+          "safeSwitchActivated": true
+        }
+      },
+      "right": {
+        "featureIndex": 0,
+        "featureName": "log_anchor",
+        "threshold": 15.990863819553152,
+        "samples": 111,
+        "parentPolicy": {
+          "leaf": "anchor_blend",
+          "alternativeMethod": "naive_last",
+          "anchorWeight": 0.7,
+          "samples": 111,
+          "anchorAbsoluteError": 91503926.80172417,
+          "policyAbsoluteError": 81068238.3394856,
+          "predictedWapeGain": 0.011262701005930971,
+          "positiveImprovementShare": 0.26126126126126126,
+          "safeSwitchActivated": true
+        },
+        "dollarAbsoluteErrorGain": 5022775.092057422,
+        "left": {
+          "leaf": "anchor_blend",
+          "alternativeMethod": "seasonal_naive",
+          "anchorWeight": 0.7,
+          "samples": 69,
+          "anchorAbsoluteError": 35141466.55718991,
+          "policyAbsoluteError": 33004053.985032935,
+          "predictedWapeGain": 0.006339207586351114,
+          "positiveImprovementShare": 0.34782608695652173,
+          "safeSwitchActivated": true
+        },
+        "right": {
+          "leaf": "anchor_blend",
+          "alternativeMethod": "naive_last",
+          "anchorWeight": 0.7,
+          "samples": 42,
+          "anchorAbsoluteError": 56362460.24453421,
+          "policyAbsoluteError": 43041409.26239525,
+          "predictedWapeGain": 0.02260114354922612,
+          "positiveImprovementShare": 0.5,
+          "safeSwitchActivated": true
+        }
+      }
+    },
+    "candidateMethods": [
+      "reference_anchor",
+      "naive_last",
+      "seasonal_naive",
+      "trailing_12_mean"
+    ],
+    "featureNames": [
+      "log_anchor",
+      "log_lag1",
+      "log_lag2",
+      "log_lag3",
+      "log_lag12",
+      "log_rolling3_mean",
+      "log_rolling6_mean",
+      "trend6_scaled",
+      "volatility6",
+      "seasonal_ratio",
+      "zero_share12",
+      "working_day_ratio",
+      "known_working_days_scaled",
+      "entity_gma",
+      "entity_kus",
+      "kus_working_day_ratio",
+      "kus_seasonal_ratio",
+      "hma_trend6_scaled",
+      "hma_month_sin",
+      "hma_month_cos",
+      "gma_month_sin",
+      "gma_month_cos",
+      "kus_month_sin",
+      "kus_month_cos",
+      "hma_horizon_scaled",
+      "gma_horizon_scaled",
+      "kus_horizon_scaled"
+    ],
+    "maxDepth": 2,
+    "minSamplesLeaf": 6,
+    "minimumWapeGain": 0.005,
+    "allowedAnchorWeights": [
+      1.0,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "objective": "minimize pooled dollar absolute error relative to the validated anchor",
+    "trainingExamples": 153
+  },
+  "evaluation": {
+    "officialTotalMetrics": {
+      "wape": 0.07241686244713515,
+      "accuracy": 0.9275831375528648,
+      "mae": 1963252.5267650029,
+      "signedBias": 280083.80470340926,
+      "biasPercentage": 0.010331218262735926,
+      "foldWapeStandardDeviation": 0.05986309759668777,
+      "predictionCoverage": 1.0,
+      "foldCount": 51,
+      "rowCount": 51,
+      "actualTotal": 1382632103.6499999,
+      "predictionTotal": 1396916377.689874
+    },
+    "horizonMetrics": {
+      "1": {
+        "wape": 0.059742145940036004,
+        "accuracy": 0.940257854059964,
+        "mae": 1613922.7822006221,
+        "signedBias": -29412.349009784146,
+        "biasPercentage": -0.001088749019693416,
+        "foldWapeStandardDeviation": 0.05318744572048357,
+        "predictionCoverage": 1.0,
+        "foldCount": 18,
+        "rowCount": 18,
+        "actualTotal": 486266598.27,
+        "predictionTotal": 485737175.98782384
+      },
+      "2": {
+        "wape": 0.07336937947105313,
+        "accuracy": 0.9266306205289468,
+        "mae": 1993948.7532764669,
+        "signedBias": 237646.28970604695,
+        "biasPercentage": 0.008744437779897765,
+        "foldWapeStandardDeviation": 0.060258761736210836,
+        "predictionCoverage": 1.0,
+        "foldCount": 17,
+        "rowCount": 17,
+        "actualTotal": 462006480.77,
+        "predictionTotal": 466046467.6950028
+      },
+      "3": {
+        "wape": 0.08559311047602922,
+        "accuracy": 0.9144068895239708,
+        "mae": 2323633.7487315014,
+        "signedBias": 673356.8373154493,
+        "biasPercentage": 0.024803696450696817,
+        "foldWapeStandardDeviation": 0.06300395648045619,
+        "predictionCoverage": 1.0,
+        "foldCount": 16,
+        "rowCount": 16,
+        "actualTotal": 434359024.61,
+        "predictionTotal": 445132734.0070472
+      }
+    },
+    "entityMetrics": {
+      "GMA": {
+        "combined": {
+          "wape": 0.14203855797275697,
+          "accuracy": 0.857961442027243,
+          "mae": 238944.77260800195,
+          "signedBias": -88116.36312760983,
+          "biasPercentage": -0.05237997473576189,
+          "foldWapeStandardDeviation": 0.14381933228427776,
+          "predictionCoverage": 1.0,
+          "foldCount": 51,
+          "rowCount": 51,
+          "actualTotal": 85794896.65999998,
+          "predictionTotal": 81300962.1404919
+        },
+        "byHorizon": {
+          "1": {
+            "wape": 0.13033093475778978,
+            "accuracy": 0.8696690652422102,
+            "mae": 217974.97639814814,
+            "signedBias": -56637.09239814815,
+            "biasPercentage": -0.033864277983592754,
+            "foldWapeStandardDeviation": 0.1797754135333398,
+            "predictionCoverage": 1.0,
+            "foldCount": 18,
+            "rowCount": 18,
+            "actualTotal": 30104514.959999997,
+            "predictionTotal": 29085047.296833333
+          },
+          "2": {
+            "wape": 0.15662961305297984,
+            "accuracy": 0.8433703869470202,
+            "mae": 261059.81054493468,
+            "signedBias": -84716.46045669935,
+            "biasPercentage": -0.05082784053528973,
+            "foldWapeStandardDeviation": 0.13598356415755652,
+            "predictionCoverage": 1.0,
+            "foldCount": 17,
+            "rowCount": 17,
+            "actualTotal": 28334468.13,
+            "predictionTotal": 26894288.30223611
+          },
+          "3": {
+            "wape": 0.1398095164612536,
+            "accuracy": 0.8601904835387464,
+            "mae": 239038.56553609663,
+            "signedBias": -127142.93928609662,
+            "biasPercentage": -0.07436370287441092,
+            "foldWapeStandardDeviation": 0.09820519015632231,
+            "predictionCoverage": 1.0,
+            "foldCount": 16,
+            "rowCount": 16,
+            "actualTotal": 27355913.57,
+            "predictionTotal": 25321626.541422453
+          }
+        }
+      },
+      "HMA": {
+        "combined": {
+          "wape": 0.10621192381166975,
+          "accuracy": 0.8937880761883302,
+          "mae": 1838839.6551186042,
+          "signedBias": 286238.30987918057,
+          "biasPercentage": 0.016533209666346756,
+          "foldWapeStandardDeviation": 0.08618393470493617,
+          "predictionCoverage": 1.0,
+          "foldCount": 51,
+          "rowCount": 51,
+          "actualTotal": 882959455.45,
+          "predictionTotal": 897557609.2538381
+        },
+        "byHorizon": {
+          "1": {
+            "wape": 0.09526302430540279,
+            "accuracy": 0.9047369756945972,
+            "mae": 1647194.4620722528,
+            "signedBias": -102296.40195419433,
+            "biasPercentage": -0.005916159172522891,
+            "foldWapeStandardDeviation": 0.07026999238587829,
+            "predictionCoverage": 1.0,
+            "foldCount": 18,
+            "rowCount": 18,
+            "actualTotal": 311238285.09,
+            "predictionTotal": 309396949.85482454
+          },
+          "2": {
+            "wape": 0.10443061087614683,
+            "accuracy": 0.8955693891238532,
+            "mae": 1814872.8943824242,
+            "signedBias": 292808.76831458596,
+            "biasPercentage": 0.016848672234641364,
+            "foldWapeStandardDeviation": 0.08911315704280409,
+            "predictionCoverage": 1.0,
+            "foldCount": 17,
+            "rowCount": 17,
+            "actualTotal": 295438654.87,
+            "predictionTotal": 300416403.93134797
+          },
+          "3": {
+            "wape": 0.12045091898134087,
+            "accuracy": 0.8795490810186591,
+            "mae": 2079905.1805779403,
+            "signedBias": 716358.748604109,
+            "biasPercentage": 0.04148557847512649,
+            "foldWapeStandardDeviation": 0.0961417191966509,
+            "predictionCoverage": 1.0,
+            "foldCount": 16,
+            "rowCount": 16,
+            "actualTotal": 276282515.49,
+            "predictionTotal": 287744255.46766573
+          }
+        }
+      },
+      "KUS": {
+        "combined": {
+          "wape": 0.09728692561435011,
+          "accuracy": 0.9027130743856498,
+          "mae": 789507.7260295383,
+          "signedBias": 81961.85795183833,
+          "biasPercentage": 0.010099732928359077,
+          "foldWapeStandardDeviation": 0.06730299746666808,
+          "predictionCoverage": 1.0,
+          "foldCount": 51,
+          "rowCount": 51,
+          "actualTotal": 413877751.54,
+          "predictionTotal": 418057806.2955438
+        },
+        "byHorizon": {
+          "1": {
+            "wape": 0.09036027636603586,
+            "accuracy": 0.9096397236339642,
+            "mae": 727519.6921763787,
+            "signedBias": 129521.14534255795,
+            "biasPercentage": 0.016086941170468883,
+            "foldWapeStandardDeviation": 0.06824783530014629,
+            "predictionCoverage": 1.0,
+            "foldCount": 18,
+            "rowCount": 18,
+            "actualTotal": 144923798.22,
+            "predictionTotal": 147255178.83616605
+          },
+          "2": {
+            "wape": 0.09806886525294765,
+            "accuracy": 0.9019311347470523,
+            "mae": 797434.6198005078,
+            "signedBias": 29553.981848160463,
+            "biasPercentage": 0.0036345618707655006,
+            "foldWapeStandardDeviation": 0.06956035632674563,
+            "predictionCoverage": 1.0,
+            "foldCount": 17,
+            "rowCount": 17,
+            "actualTotal": 138233357.76999998,
+            "predictionTotal": 138735775.46141872
+          },
+          "3": {
+            "wape": 0.10413929782408339,
+            "accuracy": 0.8958607021759166,
+            "mae": 850821.9394826875,
+            "signedBias": 84141.02799743653,
+            "biasPercentage": 0.01029873251643845,
+            "foldWapeStandardDeviation": 0.06303254696899484,
+            "predictionCoverage": 1.0,
+            "foldCount": 16,
+            "rowCount": 16,
+            "actualTotal": 130720595.55,
+            "predictionTotal": 132066851.99795899
+          }
+        }
+      }
+    },
+    "foldAudit": {
+      "status": "pass",
+      "violations": [],
+      "expectedHorizonCounts": {
+        "1": 18,
+        "2": 17,
+        "3": 16,
+        "combined": 51
+      },
+      "observedHorizonCounts": {
+        "1": 18,
+        "2": 17,
+        "3": 16,
+        "combined": 51
+      },
+      "foldKeyCount": 51,
+      "missingPredictionCount": 0,
+      "coverage": 1.0
+    },
+    "calibrationRows": [
+      {
+        "entity": "HMA",
+        "origin_month": "2024-12",
+        "target_month": "2025-01",
+        "horizon": 1,
+        "absoluteResidual": 793630.8466506917
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2024-12",
+        "target_month": "2025-01",
+        "horizon": 1,
+        "absoluteResidual": 289473.0900000001
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2024-12",
+        "target_month": "2025-01",
+        "horizon": 1,
+        "absoluteResidual": 516526.9299999997
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2024-12",
+        "target_month": "2025-02",
+        "horizon": 2,
+        "absoluteResidual": 2436088.886052564
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2024-12",
+        "target_month": "2025-02",
+        "horizon": 2,
+        "absoluteResidual": 502019.18000000005
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2024-12",
+        "target_month": "2025-02",
+        "horizon": 2,
+        "absoluteResidual": 140149.58190476242
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2024-12",
+        "target_month": "2025-03",
+        "horizon": 3,
+        "absoluteResidual": 816152.4369932823
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2024-12",
+        "target_month": "2025-03",
+        "horizon": 3,
+        "absoluteResidual": 6631.149999999907
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2024-12",
+        "target_month": "2025-03",
+        "horizon": 3,
+        "absoluteResidual": 313287.17000000086
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-01",
+        "target_month": "2025-02",
+        "horizon": 1,
+        "absoluteResidual": 2738099.409646768
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-01",
+        "target_month": "2025-02",
+        "horizon": 1,
+        "absoluteResidual": 791492.2700000001
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-01",
+        "target_month": "2025-02",
+        "horizon": 1,
+        "absoluteResidual": 344801.2383333342
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-01",
+        "target_month": "2025-03",
+        "horizon": 2,
+        "absoluteResidual": 1071898.396488808
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-01",
+        "target_month": "2025-03",
+        "horizon": 2,
+        "absoluteResidual": 282841.9400000002
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-01",
+        "target_month": "2025-03",
+        "horizon": 2,
+        "absoluteResidual": 804130.9220000003
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-01",
+        "target_month": "2025-04",
+        "horizon": 3,
+        "absoluteResidual": 3301247.759971272
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-01",
+        "target_month": "2025-04",
+        "horizon": 3,
+        "absoluteResidual": 151342.58000000007
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-01",
+        "target_month": "2025-04",
+        "horizon": 3,
+        "absoluteResidual": 720225.0770000014
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-02",
+        "target_month": "2025-03",
+        "horizon": 1,
+        "absoluteResidual": 333156.54741990194
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-02",
+        "target_month": "2025-03",
+        "horizon": 1,
+        "absoluteResidual": 508650.32999999996
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-02",
+        "target_month": "2025-03",
+        "horizon": 1,
+        "absoluteResidual": 313287.17000000086
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-02",
+        "target_month": "2025-04",
+        "horizon": 2,
+        "absoluteResidual": 2627977.2057713307
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-02",
+        "target_month": "2025-04",
+        "horizon": 2,
+        "absoluteResidual": 640149.6900000001
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-02",
+        "target_month": "2025-04",
+        "horizon": 2,
+        "absoluteResidual": 372991.3100000005
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-02",
+        "target_month": "2025-05",
+        "horizon": 3,
+        "absoluteResidual": 2534727.3453438655
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-02",
+        "target_month": "2025-05",
+        "horizon": 3,
+        "absoluteResidual": 741369.8099999999
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-02",
+        "target_month": "2025-05",
+        "horizon": 3,
+        "absoluteResidual": 2600581.371818183
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-03",
+        "target_month": "2025-04",
+        "horizon": 1,
+        "absoluteResidual": 2787510.166861322
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-03",
+        "target_month": "2025-04",
+        "horizon": 1,
+        "absoluteResidual": 131499.3600000001
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-03",
+        "target_month": "2025-04",
+        "horizon": 1,
+        "absoluteResidual": 372991.3100000005
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-03",
+        "target_month": "2025-05",
+        "horizon": 2,
+        "absoluteResidual": 2567748.0279679075
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-03",
+        "target_month": "2025-05",
+        "horizon": 2,
+        "absoluteResidual": 232719.47999999998
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-03",
+        "target_month": "2025-05",
+        "horizon": 2,
+        "absoluteResidual": 2600581.371818183
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-03",
+        "target_month": "2025-06",
+        "horizon": 3,
+        "absoluteResidual": 383109.21845491417
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-03",
+        "target_month": "2025-06",
+        "horizon": 3,
+        "absoluteResidual": 140800.16000000015
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-03",
+        "target_month": "2025-06",
+        "horizon": 3,
+        "absoluteResidual": 1021813.1574999988
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-04",
+        "target_month": "2025-05",
+        "horizon": 1,
+        "absoluteResidual": 1316913.057850875
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-04",
+        "target_month": "2025-05",
+        "horizon": 1,
+        "absoluteResidual": 101220.11999999988
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-04",
+        "target_month": "2025-05",
+        "horizon": 1,
+        "absoluteResidual": 2574594.8012727275
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-04",
+        "target_month": "2025-06",
+        "horizon": 2,
+        "absoluteResidual": 1699170.6694007292
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-04",
+        "target_month": "2025-06",
+        "horizon": 2,
+        "absoluteResidual": 9300.800000000047
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-04",
+        "target_month": "2025-06",
+        "horizon": 2,
+        "absoluteResidual": 1051380.9992499985
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-04",
+        "target_month": "2025-07",
+        "horizon": 3,
+        "absoluteResidual": 1038103.2373981178
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-04",
+        "target_month": "2025-07",
+        "horizon": 3,
+        "absoluteResidual": 308792.06000000006
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-04",
+        "target_month": "2025-07",
+        "horizon": 3,
+        "absoluteResidual": 539567.6110000014
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-05",
+        "target_month": "2025-06",
+        "horizon": 1,
+        "absoluteResidual": 2276932.0534301028
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-05",
+        "target_month": "2025-06",
+        "horizon": 1,
+        "absoluteResidual": 68297.21200000006
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-05",
+        "target_month": "2025-06",
+        "horizon": 1,
+        "absoluteResidual": 297193.15824999847
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-05",
+        "target_month": "2025-07",
+        "horizon": 2,
+        "absoluteResidual": 425295.8041328192
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-05",
+        "target_month": "2025-07",
+        "horizon": 2,
+        "absoluteResidual": 313608.8659999999
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-05",
+        "target_month": "2025-07",
+        "horizon": 2,
+        "absoluteResidual": 1293755.4520000014
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-05",
+        "target_month": "2025-08",
+        "horizon": 3,
+        "absoluteResidual": 45694.52468317002
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-05",
+        "target_month": "2025-08",
+        "horizon": 3,
+        "absoluteResidual": 176929.69200000004
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-05",
+        "target_month": "2025-08",
+        "horizon": 3,
+        "absoluteResidual": 415968.51881818287
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-06",
+        "target_month": "2025-07",
+        "horizon": 1,
+        "absoluteResidual": 2357007.2207345422
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-06",
+        "target_month": "2025-07",
+        "horizon": 1,
+        "absoluteResidual": 249265.34199999995
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-06",
+        "target_month": "2025-07",
+        "horizon": 1,
+        "absoluteResidual": 875679.4000000004
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-06",
+        "target_month": "2025-08",
+        "horizon": 2,
+        "absoluteResidual": 1308170.210734114
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-06",
+        "target_month": "2025-08",
+        "horizon": 2,
+        "absoluteResidual": 112586.16800000006
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-06",
+        "target_month": "2025-08",
+        "horizon": 2,
+        "absoluteResidual": 2107.533181818202
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-06",
+        "target_month": "2025-09",
+        "horizon": 3,
+        "absoluteResidual": 3071052.358658608
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-06",
+        "target_month": "2025-09",
+        "horizon": 3,
+        "absoluteResidual": 258100.67799999984
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-06",
+        "target_month": "2025-09",
+        "horizon": 3,
+        "absoluteResidual": 1462863.5958999991
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-07",
+        "target_month": "2025-08",
+        "horizon": 1,
+        "absoluteResidual": 534353.2077041753
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-07",
+        "target_month": "2025-08",
+        "horizon": 1,
+        "absoluteResidual": 110078.83400000003
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-07",
+        "target_month": "2025-08",
+        "horizon": 1,
+        "absoluteResidual": 102507.84454545379
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-07",
+        "target_month": "2025-09",
+        "horizon": 2,
+        "absoluteResidual": 1541129.6486562379
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-07",
+        "target_month": "2025-09",
+        "horizon": 2,
+        "absoluteResidual": 35435.67599999998
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-07",
+        "target_month": "2025-09",
+        "horizon": 2,
+        "absoluteResidual": 1243039.807
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-07",
+        "target_month": "2025-10",
+        "horizon": 3,
+        "absoluteResidual": 101393.7927423343
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-07",
+        "target_month": "2025-10",
+        "horizon": 3,
+        "absoluteResidual": 198619.89899999998
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-07",
+        "target_month": "2025-10",
+        "horizon": 3,
+        "absoluteResidual": 338899.62999999896
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-08",
+        "target_month": "2025-09",
+        "horizon": 1,
+        "absoluteResidual": 2297911.37734982
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-08",
+        "target_month": "2025-09",
+        "horizon": 1,
+        "absoluteResidual": 95741.3899999999
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-08",
+        "target_month": "2025-09",
+        "horizon": 1,
+        "absoluteResidual": 1243039.807
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-08",
+        "target_month": "2025-10",
+        "horizon": 2,
+        "absoluteResidual": 959236.8917728439
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-08",
+        "target_month": "2025-10",
+        "horizon": 2,
+        "absoluteResidual": 138314.18500000006
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-08",
+        "target_month": "2025-10",
+        "horizon": 2,
+        "absoluteResidual": 338899.62999999896
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-08",
+        "target_month": "2025-11",
+        "horizon": 3,
+        "absoluteResidual": 2515868.0904873237
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-08",
+        "target_month": "2025-11",
+        "horizon": 3,
+        "absoluteResidual": 324154.52800000017
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-08",
+        "target_month": "2025-11",
+        "horizon": 3,
+        "absoluteResidual": 808813.8147894731
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-09",
+        "target_month": "2025-10",
+        "horizon": 1,
+        "absoluteResidual": 365246.7510857843
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-09",
+        "target_month": "2025-10",
+        "horizon": 1,
+        "absoluteResidual": 100789.21499999985
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-09",
+        "target_month": "2025-10",
+        "horizon": 1,
+        "absoluteResidual": 338899.62999999896
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-09",
+        "target_month": "2025-11",
+        "horizon": 2,
+        "absoluteResidual": 3925281.354843404
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-09",
+        "target_month": "2025-11",
+        "horizon": 2,
+        "absoluteResidual": 286629.55799999996
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-09",
+        "target_month": "2025-11",
+        "horizon": 2,
+        "absoluteResidual": 808813.8147894731
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-09",
+        "target_month": "2025-12",
+        "horizon": 3,
+        "absoluteResidual": 4392834.429278197
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-09",
+        "target_month": "2025-12",
+        "horizon": 3,
+        "absoluteResidual": 158881.24099999992
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-09",
+        "target_month": "2025-12",
+        "horizon": 3,
+        "absoluteResidual": 496678.31489473674
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-10",
+        "target_month": "2025-11",
+        "horizon": 1,
+        "absoluteResidual": 4442935.499151066
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-10",
+        "target_month": "2025-11",
+        "horizon": 1,
+        "absoluteResidual": 202974.2309999999
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-10",
+        "target_month": "2025-11",
+        "horizon": 1,
+        "absoluteResidual": 808813.8147894731
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-10",
+        "target_month": "2025-12",
+        "horizon": 2,
+        "absoluteResidual": 4954357.855013436
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-10",
+        "target_month": "2025-12",
+        "horizon": 2,
+        "absoluteResidual": 75225.91399999987
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-10",
+        "target_month": "2025-12",
+        "horizon": 2,
+        "absoluteResidual": 496678.31489473674
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-10",
+        "target_month": "2026-01",
+        "horizon": 3,
+        "absoluteResidual": 4200569.358048698
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-10",
+        "target_month": "2026-01",
+        "horizon": 3,
+        "absoluteResidual": 70060.95699999994
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-10",
+        "target_month": "2026-01",
+        "horizon": 3,
+        "absoluteResidual": 699506.2206818191
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-11",
+        "target_month": "2025-12",
+        "horizon": 1,
+        "absoluteResidual": 2279608.3291075677
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-11",
+        "target_month": "2025-12",
+        "horizon": 1,
+        "absoluteResidual": 121770.36999999988
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-11",
+        "target_month": "2025-12",
+        "horizon": 1,
+        "absoluteResidual": 408879.2884210525
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-11",
+        "target_month": "2026-01",
+        "horizon": 2,
+        "absoluteResidual": 1996515.642775977
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-11",
+        "target_month": "2026-01",
+        "horizon": 2,
+        "absoluteResidual": 40093.39999999991
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-11",
+        "target_month": "2026-01",
+        "horizon": 2,
+        "absoluteResidual": 790739.499545455
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-11",
+        "target_month": "2026-02",
+        "horizon": 3,
+        "absoluteResidual": 4443422.324690759
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-11",
+        "target_month": "2026-02",
+        "horizon": 3,
+        "absoluteResidual": 451871.22
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-11",
+        "target_month": "2026-02",
+        "horizon": 3,
+        "absoluteResidual": 443241.7599999998
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-12",
+        "target_month": "2026-01",
+        "horizon": 1,
+        "absoluteResidual": 438363.0220060777
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-12",
+        "target_month": "2026-01",
+        "horizon": 1,
+        "absoluteResidual": 36009.695000000065
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-12",
+        "target_month": "2026-01",
+        "horizon": 1,
+        "absoluteResidual": 699506.2206818191
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-12",
+        "target_month": "2026-02",
+        "horizon": 2,
+        "absoluteResidual": 1443985.00803753
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-12",
+        "target_month": "2026-02",
+        "horizon": 2,
+        "absoluteResidual": 765421.996
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-12",
+        "target_month": "2026-02",
+        "horizon": 2,
+        "absoluteResidual": 443241.7599999998
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2025-12",
+        "target_month": "2026-03",
+        "horizon": 3,
+        "absoluteResidual": 411870.1222435869
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2025-12",
+        "target_month": "2026-03",
+        "horizon": 3,
+        "absoluteResidual": 318620.287
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2025-12",
+        "target_month": "2026-03",
+        "horizon": 3,
+        "absoluteResidual": 725622.9020000026
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-01",
+        "target_month": "2026-02",
+        "horizon": 1,
+        "absoluteResidual": 1664737.421683766
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-01",
+        "target_month": "2026-02",
+        "horizon": 1,
+        "absoluteResidual": 528295.6661666664
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-01",
+        "target_month": "2026-02",
+        "horizon": 1,
+        "absoluteResidual": 568733.2298333338
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-01",
+        "target_month": "2026-03",
+        "horizon": 2,
+        "absoluteResidual": 653017.9900836218
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-01",
+        "target_month": "2026-03",
+        "horizon": 2,
+        "absoluteResidual": 225100.89351388882
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-01",
+        "target_month": "2026-03",
+        "horizon": 2,
+        "absoluteResidual": 677292.0008908752
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-01",
+        "target_month": "2026-04",
+        "horizon": 3,
+        "absoluteResidual": 2050434.6072091572
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-01",
+        "target_month": "2026-04",
+        "horizon": 3,
+        "absoluteResidual": 137244.25280671264
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-01",
+        "target_month": "2026-04",
+        "horizon": 3,
+        "absoluteResidual": 281355.9799872674
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-02",
+        "target_month": "2026-03",
+        "horizon": 1,
+        "absoluteResidual": 692770.1169202533
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-02",
+        "target_month": "2026-03",
+        "horizon": 1,
+        "absoluteResidual": 122443.39499999979
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-02",
+        "target_month": "2026-03",
+        "horizon": 1,
+        "absoluteResidual": 849049.6657142881
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-02",
+        "target_month": "2026-04",
+        "horizon": 2,
+        "absoluteResidual": 354016.64482690394
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-02",
+        "target_month": "2026-04",
+        "horizon": 2,
+        "absoluteResidual": 212333.24575
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-02",
+        "target_month": "2026-04",
+        "horizon": 2,
+        "absoluteResidual": 268225.88999999873
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-02",
+        "target_month": "2026-05",
+        "horizon": 3,
+        "absoluteResidual": 2495769.1828668974
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-02",
+        "target_month": "2026-05",
+        "horizon": 3,
+        "absoluteResidual": 61546.07077083341
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-02",
+        "target_month": "2026-05",
+        "horizon": 3,
+        "absoluteResidual": 1060526.6899999995
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-03",
+        "target_month": "2026-04",
+        "horizon": 1,
+        "absoluteResidual": 414935.9736825004
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-03",
+        "target_month": "2026-04",
+        "horizon": 1,
+        "absoluteResidual": 3030.977000000188
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-03",
+        "target_month": "2026-04",
+        "horizon": 1,
+        "absoluteResidual": 268225.88999999873
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-03",
+        "target_month": "2026-05",
+        "horizon": 2,
+        "absoluteResidual": 2613313.8612497263
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-03",
+        "target_month": "2026-05",
+        "horizon": 2,
+        "absoluteResidual": 240762.10700000008
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-03",
+        "target_month": "2026-05",
+        "horizon": 2,
+        "absoluteResidual": 454104.2719999999
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-03",
+        "target_month": "2026-06",
+        "horizon": 3,
+        "absoluteResidual": 1476234.1001768615
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-03",
+        "target_month": "2026-06",
+        "horizon": 3,
+        "absoluteResidual": 319652.463
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-03",
+        "target_month": "2026-06",
+        "horizon": 3,
+        "absoluteResidual": 1684199.2173333345
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-04",
+        "target_month": "2026-05",
+        "horizon": 1,
+        "absoluteResidual": 2290580.0563033503
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-04",
+        "target_month": "2026-05",
+        "horizon": 1,
+        "absoluteResidual": 274159.1200000001
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-04",
+        "target_month": "2026-05",
+        "horizon": 1,
+        "absoluteResidual": 540161.432
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-04",
+        "target_month": "2026-06",
+        "horizon": 2,
+        "absoluteResidual": 275635.1066932585
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-04",
+        "target_month": "2026-06",
+        "horizon": 2,
+        "absoluteResidual": 325473.68000000017
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-04",
+        "target_month": "2026-06",
+        "horizon": 2,
+        "absoluteResidual": 1770256.3773333328
+      },
+      {
+        "entity": "HMA",
+        "origin_month": "2026-05",
+        "target_month": "2026-06",
+        "horizon": 1,
+        "absoluteResidual": 1624809.2597119901
+      },
+      {
+        "entity": "GMA",
+        "origin_month": "2026-05",
+        "target_month": "2026-06",
+        "horizon": 1,
+        "absoluteResidual": 188358.9580000001
+      },
+      {
+        "entity": "KUS",
+        "origin_month": "2026-05",
+        "target_month": "2026-06",
+        "horizon": 1,
+        "absoluteResidual": 1972463.6283333348
+      }
+    ],
+    "privacyNote": "Deployment artifacts omit Brand-month actual and prediction totals; only held-out absolute residuals required for interval calibration remain."
+  },
+  "runtime": {
+    "framework": "numpy",
+    "accelerator": "cpu",
+    "gpuRequired": false,
+    "trainingSecondsForBothModels": 11.150982999999542,
+    "inferenceMode": "load JSON artifact; never train on page open"
+  },
+  "reproducibility": {
+    "randomSeed": null,
+    "deterministic": true,
+    "observedCompletedMonths": 42,
+    "officialAnchors": [
+      "HMA",
+      "GMA",
+      "KUS"
+    ]
+  },
+  "promotionDecision": {
+    "status": "not_promoted",
+    "championAfterCommonFoldComparison": "rebuilt_reference_portfolio_v1",
+    "reason": "Both ML methods remain explicit challengers. The website default and validated reference portfolio are unchanged."
+  },
+  "comparison": {
+    "referencePortfolioWape": 0.06893887801948267,
+    "sameSourceAndContract": true,
+    "selection": {
+      "champion": "rebuilt_reference_portfolio_v1",
+      "reason": "The validated reference portfolio has the lowest Official Total WAPE. The 0.005 simplicity band cannot promote a more complex challenger whose WAPE is worse.",
+      "eligible": [
+        "elastic_net_anchor_residual_v1",
+        "rebuilt_reference_portfolio_v1",
+        "tree_meta_selector_v1"
+      ],
+      "tieSet": [
+        "elastic_net_anchor_residual_v1",
+        "rebuilt_reference_portfolio_v1",
+        "tree_meta_selector_v1"
+      ],
+      "minimumWape": 0.06893887801948267
+    }
+  }
+}

@@ -18,6 +18,9 @@ MONTH_NUMBERS = {
 
 OFFICIAL_ANCHORS = ("HMA", "GMA", "KUS")
 GENESIS_MODEL_PREFIXES = ("G70", "G80", "G90", "GV60", "GV70", "GV80")
+KUS_CHANNEL_EFFECTIVE_MONTH = "2026-06"
+KUS_FLEET_ELIGIBLE_PLC = "Carpet Floor Mat"
+KUS_FLEET_ELIGIBLE_MODEL_YEAR = "2027"
 
 
 def build_wholesale_long(
@@ -71,9 +74,6 @@ def build_wholesale_long(
             continue
         if raw_brand and normalized_brand != "nan" and not _is_total_label(raw_brand):
             active_brand = raw_brand
-        if channel != "wholesale":
-            continue
-
         model_name = str(row.get(model_col, "")).strip()
         if (
             not model_name
@@ -102,8 +102,13 @@ def build_wholesale_long(
                     "modelName": model_name,
                     "modelKey": normalize_model_name(model_name),
                     "modelCode": model_code,
-                    "wholesaleUnits": units,
-                    "channel": "Dealer / non-fleet",
+                    "wholesaleUnits": units if channel == "wholesale" else 0.0,
+                    "fleetUnits": units if channel == "fleet" else 0.0,
+                    "channel": (
+                        "Dealer / non-fleet"
+                        if channel == "wholesale"
+                        else "Fleet"
+                    ),
                     "sourceSheet": sheet_name,
                 }
             )
@@ -120,7 +125,8 @@ def build_wholesale_long(
             modelName=("modelName", _mode_text),
             modelCode=("modelCode", _join_unique),
             wholesaleUnits=("wholesaleUnits", "sum"),
-            channel=("channel", _mode_text),
+            fleetUnits=("fleetUnits", "sum"),
+            channel=("channel", _join_unique),
             sourceSheet=("sourceSheet", _join_unique),
         )
     )
@@ -238,6 +244,7 @@ def build_monthly_fact_table(
     qty_col: str | None,
     revenue_col: str | None,
     plc_col: str | None = None,
+    model_year_col: str | None = None,
     wholesale_long: pd.DataFrame | None = None,
     working_days_long: pd.DataFrame | None = None,
     lifecycle_records: list[dict[str, Any]] | None = None,
@@ -255,6 +262,11 @@ def build_monthly_fact_table(
     working["modelName"] = sales_df[model_col].fillna("").astype(str).str.strip()
     working["modelKey"] = working["modelName"].map(normalize_model_name)
     working["modelCode"] = sales_df[model_code_col].fillna("").astype(str).str.strip() if model_code_col and model_code_col in sales_df else ""
+    working["modelYear"] = (
+        sales_df[model_year_col].map(_normalize_model_year)
+        if model_year_col and model_year_col in sales_df
+        else ""
+    )
     working["partNumber"] = sales_df[part_number_col].fillna("").astype(str).str.strip()
     working["partDescription"] = (
         sales_df[part_description_col].fillna("").astype(str).str.strip()
@@ -298,7 +310,7 @@ def build_monthly_fact_table(
         working.groupby(
             [
                 "month", "brand", "anchorBrand", "anchorMappingMethod", "entityKey",
-                "modelKey", "modelName", "plc", "partNumber",
+                "modelKey", "modelName", "modelYear", "plc", "partNumber",
             ],
             as_index=False,
             dropna=False,
@@ -324,17 +336,25 @@ def build_monthly_fact_table(
                 )
             ]
         if wholesale["anchorBrand"].isin(OFFICIAL_ANCHORS).any():
+            value_columns = ["wholesaleUnits"]
+            if "fleetUnits" in wholesale.columns:
+                value_columns.append("fleetUnits")
             wholesale = wholesale.groupby(
                 ["month", "anchorBrand", "modelKey"], as_index=False
-            )["wholesaleUnits"].sum()
+            )[value_columns].sum()
             facts = facts.merge(wholesale, on=["month", "anchorBrand", "modelKey"], how="left")
         else:
+            value_columns = ["wholesaleUnits"]
+            if "fleetUnits" in wholesale.columns:
+                value_columns.append("fleetUnits")
             wholesale = wholesale.groupby(
                 ["month", "modelKey"], as_index=False
-            )["wholesaleUnits"].sum()
+            )[value_columns].sum()
             facts = facts.merge(wholesale, on=["month", "modelKey"], how="left")
     else:
         facts["wholesaleUnits"] = pd.NA
+    if "fleetUnits" not in facts.columns:
+        facts["fleetUnits"] = pd.NA
     if working_days_long is not None and not working_days_long.empty:
         facts = facts.merge(working_days_long[["month", "workingDays"]], on="month", how="left")
     else:
@@ -359,12 +379,188 @@ def build_monthly_fact_table(
     return facts[
         [
             "month", "brand", "anchorBrand", "anchorMappingMethod", "entityKey", "modelName",
-            "modelCode", "plc", "partNumber", "partDescription", "lifecycleStatus",
+            "modelCode", "modelYear", "plc", "partNumber", "partDescription", "lifecycleStatus",
             "lifecycleStatusCode", "installationQuantity", "pioRevenue", "wholesaleUnits",
-            "accessoryUnitsPerVehicle", "revenuePerVehicle", "pnvw", "workingDays",
+            "fleetUnits", "accessoryUnitsPerVehicle", "revenuePerVehicle", "pnvw", "workingDays",
             "quantityPerWorkingDay", "sourceRows",
         ]
     ]
+
+
+def build_kus_channel_baskets(
+    facts: pd.DataFrame,
+    wholesale_long: pd.DataFrame | None,
+    *,
+    effective_month: str = KUS_CHANNEL_EFFECTIVE_MONTH,
+) -> pd.DataFrame:
+    """Reconcile KUS PIO Revenue into governed Wholesale and Fleet baskets.
+
+    Before June 2026 the governed historical contract remains Wholesale-only.
+    From June 2026, KUS 2027-model-year Carpet Floor Mat quantity is allocated
+    to Fleet first, capped by known Fleet vehicle volume. All remaining KUS PIO
+    Revenue and quantity stay in the Wholesale basket, so the two baskets
+    reconcile exactly to the official KUS total without double counting.
+    """
+
+    columns = [
+        "month", "contractMode", "kusRevenue", "kusQuantity",
+        "wholesaleVehicleVolume", "fleetVehicleVolume",
+        "eligibleCfm2027Revenue", "eligibleCfm2027Quantity",
+        "wholesaleBasketRevenue", "fleetBasketRevenue",
+        "wholesaleBasketQuantity", "fleetBasketQuantity",
+        "wholesalePnvw", "fleetCfmPnvw", "fleetPenetrationCoverage",
+        "fleetQuantityShortfall", "revenueReconciliationDelta",
+        "quantityReconciliationDelta", "allocationStatus",
+    ]
+    if facts.empty or "anchorBrand" not in facts.columns:
+        return pd.DataFrame(columns=columns)
+
+    kus = facts[facts["anchorBrand"].astype(str) == "KUS"].copy()
+    if kus.empty:
+        return pd.DataFrame(columns=columns)
+    kus["pioRevenue"] = pd.to_numeric(kus["pioRevenue"], errors="coerce").fillna(0.0).clip(lower=0)
+    kus["installationQuantity"] = (
+        pd.to_numeric(kus["installationQuantity"], errors="coerce")
+        .fillna(0.0)
+        .clip(lower=0)
+    )
+    totals = (
+        kus.groupby("month", as_index=False)
+        .agg(
+            kusRevenue=("pioRevenue", "sum"),
+            kusQuantity=("installationQuantity", "sum"),
+        )
+    )
+    model_year = kus.get("modelYear", pd.Series("", index=kus.index)).map(_normalize_model_year)
+    plc = kus.get("plc", pd.Series("", index=kus.index)).fillna("").astype(str).str.strip()
+    eligible = kus[
+        plc.str.casefold().eq(KUS_FLEET_ELIGIBLE_PLC.casefold())
+        & model_year.eq(KUS_FLEET_ELIGIBLE_MODEL_YEAR)
+    ]
+    eligible_monthly = (
+        eligible.groupby("month", as_index=False)
+        .agg(
+            eligibleCfm2027Revenue=("pioRevenue", "sum"),
+            eligibleCfm2027Quantity=("installationQuantity", "sum"),
+        )
+    )
+    totals = totals.merge(eligible_monthly, on="month", how="left")
+    totals[["eligibleCfm2027Revenue", "eligibleCfm2027Quantity"]] = totals[
+        ["eligibleCfm2027Revenue", "eligibleCfm2027Quantity"]
+    ].fillna(0.0)
+
+    vehicles = pd.DataFrame(
+        columns=["month", "wholesaleVehicleVolume", "fleetVehicleVolume"]
+    )
+    if wholesale_long is not None and not wholesale_long.empty:
+        source = wholesale_long.copy()
+        if "anchorBrand" in source.columns:
+            source = source[source["anchorBrand"].astype(str) == "KUS"]
+        wholesale_values = (
+            source["wholesaleUnits"]
+            if "wholesaleUnits" in source.columns
+            else pd.Series(0.0, index=source.index)
+        )
+        fleet_values = (
+            source["fleetUnits"]
+            if "fleetUnits" in source.columns
+            else pd.Series(0.0, index=source.index)
+        )
+        source["wholesaleUnits"] = pd.to_numeric(
+            wholesale_values, errors="coerce"
+        ).fillna(0.0)
+        source["fleetUnits"] = pd.to_numeric(
+            fleet_values, errors="coerce"
+        ).fillna(0.0)
+        vehicles = (
+            source.groupby("month", as_index=False)
+            .agg(
+                wholesaleVehicleVolume=("wholesaleUnits", "sum"),
+                fleetVehicleVolume=("fleetUnits", "sum"),
+            )
+        )
+    result = totals.merge(vehicles, on="month", how="left").fillna(
+        {"wholesaleVehicleVolume": 0.0, "fleetVehicleVolume": 0.0}
+    )
+
+    records: list[dict[str, Any]] = []
+    effective = pd.Period(effective_month, freq="M")
+    for row in result.to_dict(orient="records"):
+        month = str(row["month"])
+        total_revenue = float(row["kusRevenue"])
+        total_quantity = float(row["kusQuantity"])
+        wholesale_vehicles = max(float(row["wholesaleVehicleVolume"]), 0.0)
+        fleet_vehicles = max(float(row["fleetVehicleVolume"]), 0.0)
+        eligible_revenue = max(float(row["eligibleCfm2027Revenue"]), 0.0)
+        eligible_quantity = max(float(row["eligibleCfm2027Quantity"]), 0.0)
+        governed_split = pd.Period(month, freq="M") >= effective
+        if governed_split:
+            fleet_quantity = min(fleet_vehicles, eligible_quantity)
+            eligible_unit_revenue = (
+                eligible_revenue / eligible_quantity
+                if eligible_quantity > 0
+                else 0.0
+            )
+            fleet_revenue = min(
+                fleet_quantity * eligible_unit_revenue,
+                eligible_revenue,
+                total_revenue,
+            )
+            contract_mode = "separate_wholesale_and_fleet"
+        else:
+            fleet_quantity = 0.0
+            fleet_revenue = 0.0
+            contract_mode = "legacy_wholesale_only"
+        wholesale_quantity = total_quantity - fleet_quantity
+        wholesale_revenue = total_revenue - fleet_revenue
+        fleet_shortfall = (
+            max(fleet_vehicles - eligible_quantity, 0.0)
+            if governed_split
+            else 0.0
+        )
+        revenue_delta = total_revenue - wholesale_revenue - fleet_revenue
+        quantity_delta = total_quantity - wholesale_quantity - fleet_quantity
+        status = "pass"
+        if abs(revenue_delta) > 1e-6 or abs(quantity_delta) > 1e-6:
+            status = "reconciliation_error"
+        elif governed_split and fleet_shortfall > 0:
+            status = "pass_with_fleet_quantity_shortfall"
+        records.append(
+            {
+                "month": month,
+                "contractMode": contract_mode,
+                "kusRevenue": total_revenue,
+                "kusQuantity": total_quantity,
+                "wholesaleVehicleVolume": wholesale_vehicles,
+                "fleetVehicleVolume": fleet_vehicles,
+                "eligibleCfm2027Revenue": eligible_revenue,
+                "eligibleCfm2027Quantity": eligible_quantity,
+                "wholesaleBasketRevenue": wholesale_revenue,
+                "fleetBasketRevenue": fleet_revenue,
+                "wholesaleBasketQuantity": wholesale_quantity,
+                "fleetBasketQuantity": fleet_quantity,
+                "wholesalePnvw": (
+                    wholesale_revenue / wholesale_vehicles
+                    if wholesale_vehicles > 0
+                    else None
+                ),
+                "fleetCfmPnvw": (
+                    fleet_revenue / fleet_vehicles
+                    if fleet_vehicles > 0
+                    else None
+                ),
+                "fleetPenetrationCoverage": (
+                    fleet_quantity / fleet_vehicles
+                    if fleet_vehicles > 0 and governed_split
+                    else None
+                ),
+                "fleetQuantityShortfall": fleet_shortfall,
+                "revenueReconciliationDelta": revenue_delta,
+                "quantityReconciliationDelta": quantity_delta,
+                "allocationStatus": status,
+            }
+        )
+    return pd.DataFrame(records, columns=columns).sort_values("month").reset_index(drop=True)
 
 
 def summarize_monthly_facts(facts: pd.DataFrame) -> dict[str, Any]:
@@ -375,7 +571,7 @@ def summarize_monthly_facts(facts: pd.DataFrame) -> dict[str, Any]:
             "anchorCount": 0, "dealerWholesaleExactQuantityCoveragePct": 0.0,
             "totalQuantity": 0.0, "totalRevenue": 0.0,
             "wholesaleCoveragePct": 0.0, "workingDaysCoveragePct": 0.0,
-            "grain": "month x brand x model entity x PLC x part number",
+            "grain": "month x brand x model entity x model year x PLC x part number",
         }
     total_quantity = float(facts["installationQuantity"].sum())
     exact_quantity = float(
@@ -409,7 +605,7 @@ def summarize_monthly_facts(facts: pd.DataFrame) -> dict[str, Any]:
         ),
         "wholesaleCoveragePct": round(float(facts["wholesaleUnits"].notna().mean() * 100), 2),
         "workingDaysCoveragePct": round(float(facts["workingDays"].notna().mean() * 100), 2),
-        "grain": "month x brand x model entity x PLC x part number",
+        "grain": "month x brand x model entity x model year x PLC x part number",
     }
 
 
@@ -428,7 +624,7 @@ def _empty_wholesale() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
             "month", "brand", "anchorBrand", "modelName", "modelKey", "modelCode",
-            "wholesaleUnits", "channel", "sourceSheet",
+            "wholesaleUnits", "fleetUnits", "channel", "sourceSheet",
         ]
     )
 
@@ -441,12 +637,23 @@ def _empty_facts() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
             "month", "brand", "anchorBrand", "anchorMappingMethod", "entityKey",
-            "modelName", "modelCode", "plc", "partNumber", "partDescription",
+            "modelName", "modelCode", "modelYear", "plc", "partNumber", "partDescription",
             "lifecycleStatus", "lifecycleStatusCode", "installationQuantity", "pioRevenue",
-            "wholesaleUnits", "accessoryUnitsPerVehicle", "revenuePerVehicle", "pnvw",
+            "wholesaleUnits", "fleetUnits", "accessoryUnitsPerVehicle", "revenuePerVehicle", "pnvw",
             "workingDays", "quantityPerWorkingDay", "sourceRows",
         ]
     )
+
+
+def _normalize_model_year(value: Any) -> str:
+    if pd.isna(value):
+        return ""
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.notna(numeric):
+        integer = int(float(numeric))
+        return str(integer) if 1900 <= integer <= 2200 else ""
+    match = re.search(r"\b(20\d{2})\b", str(value))
+    return match.group(1) if match else ""
 
 
 def _assign_sales_anchor(

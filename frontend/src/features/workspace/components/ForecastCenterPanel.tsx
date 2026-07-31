@@ -32,6 +32,8 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   auto: "Auto model selection",
   baseline_auto: "Statistical baseline selection",
   reference_portfolio: "Validated reference portfolio",
+  tree_meta_selector_v1: "Tree Meta-Selector v1",
+  elastic_net_anchor_residual_v1: "Elastic Net Anchor Residual v1",
   ets_additive: "Additive ETS",
   naive_last: "Naive last value",
   working_day_adjusted_seasonal: "Working-day-adjusted seasonal",
@@ -42,6 +44,15 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   hw_add_add__heuristic__bias_on__log1p__rolling_24__robust_winsorized:
     "Optimized additive Holt-Winters (robust 24-month log model)",
 };
+
+const PRETRAINED_ML_STRATEGIES = new Set([
+  "tree_meta_selector_v1",
+  "elastic_net_anchor_residual_v1",
+]);
+const GOVERNED_REVENUE_ONLY_STRATEGIES = new Set([
+  "reference_portfolio",
+  ...PRETRAINED_ML_STRATEGIES,
+]);
 
 type ForecastCenterPanelProps = {
   data: ForecastCenterPayload | null;
@@ -185,7 +196,14 @@ export default function ForecastCenterPanel({
                 { label: "Auto: baselines + drivers", value: "auto" },
                 { label: "Auto: statistical baselines only", value: "baseline_auto" },
                 ...(metric === "revenue"
-                  ? [{ label: "Validated reference portfolio", value: "reference_portfolio" }]
+                  ? [
+                      { label: "Validated reference portfolio", value: "reference_portfolio" },
+                      { label: "Challenger: Tree Meta-Selector v1", value: "tree_meta_selector_v1" },
+                      {
+                        label: "Challenger: Elastic Net Anchor Residual v1",
+                        value: "elastic_net_anchor_residual_v1",
+                      },
+                    ]
                   : []),
                 { label: "Driver regression (OLS)", value: "driver_adjusted_regression" },
                 { label: "Additive ETS", value: "ets_additive" },
@@ -202,14 +220,14 @@ export default function ForecastCenterPanel({
             <Select
               aria-label="Working Days factor"
               value={useWorkingDays}
-              disabled={modelStrategy === "reference_portfolio"}
+              disabled={GOVERNED_REVENUE_ONLY_STRATEGIES.has(modelStrategy)}
               options={[{ label: "Working Days on", value: true }, { label: "Working Days off", value: false }]}
               onChange={onWorkingDaysChange}
             />
             <Select
               aria-label="Seasonality factor"
               value={useSeasonality}
-              disabled={modelStrategy === "reference_portfolio"}
+              disabled={GOVERNED_REVENUE_ONLY_STRATEGIES.has(modelStrategy)}
               options={[{ label: "Seasonality on", value: true }, { label: "Seasonality off", value: false }]}
               onChange={onSeasonalityChange}
             />
@@ -237,10 +255,19 @@ export default function ForecastCenterPanel({
             </Space.Compact>
             <Button aria-label="Generate governed forecast" type="primary" onClick={onRun}>Generate forecast</Button>
           </div>
+          {PRETRAINED_ML_STRATEGIES.has(modelStrategy) ? (
+            <Alert
+              style={{ marginTop: 14 }}
+              type="info"
+              showIcon
+              message="Pretrained CPU challenger"
+              description="Forecast Center loads the exact-source JSON artifact and performs inference only. Opening this page never trains a model and does not require a GPU."
+            />
+          ) : null}
           <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
             HMA, GMA, and KUS are the official forecast anchors. Model and PLC values reconcile exactly to the parent.
-            Current runtime uses dealer/non-fleet wholesale. The approved KUS contract separates Wholesale and
-            Carpet Floor Mat Fleet baskets from June 2026; implementation and backtest are pending.
+            HMA/GMA use dealer/non-fleet wholesale. KUS uses separate Wholesale and model-year-2027
+            Carpet Floor Mat Fleet baskets from June 2026, with Fleet-first allocation and no double counting.
             IONIQ variants remain separate model entities.
           </Paragraph>
         </Card>
@@ -523,7 +550,8 @@ export default function ForecastCenterPanel({
                 ]}
               />
               <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
-                Current runtime does not yet add Fleet. The approved KUS Fleet-first, no-double-counting rule is pending implementation.
+                KUS Fleet is retained as a separate basket from June 2026. Eligible model-year-2027 Carpet Floor Mat
+                quantity is allocated to Fleet first, and Wholesale plus Fleet reconcile to the official KUS total.
                 Low-volume and stopped series receive no normal allocation;
                 new/reintroduced models use a recent run-rate proxy. Any unavoidable remainder is labeled Planner review residual.
               </Paragraph>

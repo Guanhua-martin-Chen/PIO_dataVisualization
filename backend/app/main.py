@@ -53,6 +53,7 @@ from pio_platform.output_center import (
     get_output_run,
     output_run_preview,
 )
+from pio_platform.ml_challengers import ML_CHALLENGER_IDS
 from pio_platform.sop_workbook import build_sop_workbook_bytes
 from pio_platform.pivot import build_pivot, is_wide_month_matrix, wide_brand_series
 from pio_platform.profiling import build_column_profile, build_insights, compute_kpis
@@ -562,6 +563,7 @@ def get_hierarchical_forecast(
             model_strategy=model_strategy,
             limit=limit,
             latest_month_is_complete=latest_month_is_complete,
+            source_hash=_workbook_sha256(session.file_bytes),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -950,7 +952,7 @@ def export_forecast_center_xlsx(
         source_hash=_workbook_sha256(session.file_bytes),
     )
     non_revenue_common = dict(common)
-    if model_strategy == "reference_portfolio":
+    if model_strategy == "reference_portfolio" or model_strategy in ML_CHALLENGER_IDS:
         non_revenue_common["model_strategy"] = "auto"
     quantity = build_forecast_center(
         facts,
@@ -3426,7 +3428,7 @@ def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFr
         return pd.DataFrame(
             columns=[
                 "month", "brand", "anchorBrand", "modelName", "modelKey", "modelCode",
-                "wholesaleUnits", "channel", "sourceSheet",
+                "wholesaleUnits", "fleetUnits", "channel", "sourceSheet",
             ]
         )
     combined = pd.concat(frames, ignore_index=True)
@@ -3437,7 +3439,8 @@ def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFr
             modelName=("modelName", "first"),
             modelCode=("modelCode", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
             wholesaleUnits=("wholesaleUnits", "sum"),
-            channel=("channel", "first"),
+            fleetUnits=("fleetUnits", "sum"),
+            channel=("channel", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
             sourceSheet=("sourceSheet", lambda values: " / ".join(sorted({str(value) for value in values if str(value)}))),
         )
     )
@@ -3483,6 +3486,7 @@ def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.Dat
         part_number_col=columns["part_number"],
         part_description_col=columns["part_description"],
         plc_col=columns["plc"],
+        model_year_col=columns["model_year"],
         qty_col=columns["quantity"],
         revenue_col=columns["revenue"],
         wholesale_long=_all_wholesale_long(session, sales_sheet),

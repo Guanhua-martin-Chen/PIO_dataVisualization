@@ -73,6 +73,11 @@ const { RangePicker } = DatePicker;
 const { Title, Paragraph, Text } = Typography;
 const LEGACY_FORECAST_UI_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_LEGACY_FORECAST_UI === "true";
+const REVENUE_ONLY_MODEL_STRATEGIES = new Set([
+  "reference_portfolio",
+  "tree_meta_selector_v1",
+  "elastic_net_anchor_residual_v1",
+]);
 
 type InventorySource = {
   part: string;
@@ -632,7 +637,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     params.set("tariff_impact_pct", String(tariffImpactPct));
     params.set(
       "model_strategy",
-      hierarchyModelStrategy === "reference_portfolio" ? "auto" : hierarchyModelStrategy,
+      REVENUE_ONLY_MODEL_STRATEGIES.has(hierarchyModelStrategy)
+        ? "auto"
+        : hierarchyModelStrategy,
     );
     params.set("min_monthly_volume", String(minimumMonthlyVolume));
     params.set("top_n", "10");
@@ -1307,7 +1314,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           const nextLevel = nextMetric === "wholesale_quantity" && ["plc", "model_plc"].includes(hierarchyLevel)
             ? "model"
             : hierarchyLevel;
-          const nextStrategy = nextMetric !== "revenue" && hierarchyModelStrategy === "reference_portfolio"
+          const nextStrategy = nextMetric !== "revenue"
+            && REVENUE_ONLY_MODEL_STRATEGIES.has(hierarchyModelStrategy)
             ? "auto"
             : hierarchyModelStrategy;
           setForecastMetric(nextMetric);
@@ -1336,7 +1344,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           setHierarchyModelStrategy(strategy);
           setForecastOutputRun(null);
           setInventoryPlanningData(null);
-          if (strategy === "reference_portfolio") {
+          if (REVENUE_ONLY_MODEL_STRATEGIES.has(strategy)) {
             setUseWorkingDays(true);
             setUseSeasonality(true);
           }

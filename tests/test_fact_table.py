@@ -5,6 +5,7 @@ import unittest
 import pandas as pd
 
 from pio_platform.fact_table import (
+    build_kus_channel_baskets,
     build_monthly_fact_table,
     build_wholesale_long,
     build_working_days_long,
@@ -45,6 +46,7 @@ class MonthlyFactTableTests(unittest.TestCase):
 
         self.assertEqual(set(result["modelName"]), {"Elantra", "Tucson", "G70"})
         self.assertEqual(float(result["wholesaleUnits"].sum()), 350.0)
+        self.assertEqual(float(result["fleetUnits"].sum()), 1998.0)
 
     def test_fact_grain_combines_sales_wholesale_and_working_days(self) -> None:
         sales = pd.DataFrame(
@@ -94,7 +96,10 @@ class MonthlyFactTableTests(unittest.TestCase):
         self.assertEqual(float(elantra["quantityPerWorkingDay"]), 0.75)
         self.assertEqual(elantra["plc"], "Floor Mat")
         self.assertEqual(summary["plcCount"], 2)
-        self.assertEqual(summary["grain"], "month x brand x model entity x PLC x part number")
+        self.assertEqual(
+            summary["grain"],
+            "month x brand x model entity x model year x PLC x part number",
+        )
         self.assertEqual(summary["workingDaysCoveragePct"], 100.0)
 
     def test_hma_gma_kus_mapping_uses_exact_model_names_and_keeps_ioniq_variants_separate(self) -> None:
@@ -141,6 +146,69 @@ class MonthlyFactTableTests(unittest.TestCase):
         self.assertEqual(anchors["GV60"], "GMA")
         self.assertEqual(anchors["Sportage"], "KUS")
         self.assertEqual(facts[facts["modelName"].str.startswith("Ioniq")]["entityKey"].nunique(), 2)
+
+    def test_kus_fleet_first_baskets_reconcile_without_double_counting(self) -> None:
+        sales = pd.DataFrame(
+            {
+                "Brand": ["K", "K", "K", "K"],
+                "Model": ["Sportage"] * 4,
+                "Model Year": [2027, 2026, 2027, 2027],
+                "Part": ["CFM27", "CFM26", "LOCK", "PRE"],
+                "Description": ["Mat", "Mat", "Lock", "Mat"],
+                "PLC": [
+                    "Carpet Floor Mat", "Carpet Floor Mat",
+                    "Wheel Lock", "Carpet Floor Mat",
+                ],
+                "Qty": [100, 40, 10, 25],
+                "Revenue": [10_000, 4_000, 2_000, 2_500],
+            }
+        )
+        dates = pd.Series(
+            pd.to_datetime(
+                ["2026-06-10", "2026-06-11", "2026-06-12", "2026-05-10"]
+            )
+        )
+        wholesale = pd.DataFrame(
+            {
+                "month": ["2026-05", "2026-06"],
+                "brand": ["KUS", "KUS"],
+                "anchorBrand": ["KUS", "KUS"],
+                "modelName": ["Sportage", "Sportage"],
+                "modelKey": ["SPORTAGE", "SPORTAGE"],
+                "wholesaleUnits": [80, 120],
+                "fleetUnits": [20, 60],
+            }
+        )
+        facts = build_monthly_fact_table(
+            sales,
+            dates,
+            brand_col="Brand",
+            model_col="Model",
+            model_year_col="Model Year",
+            model_code_col=None,
+            part_number_col="Part",
+            part_description_col="Description",
+            plc_col="PLC",
+            qty_col="Qty",
+            revenue_col="Revenue",
+            wholesale_long=wholesale,
+        )
+
+        baskets = build_kus_channel_baskets(facts, wholesale)
+        may = baskets[baskets["month"] == "2026-05"].iloc[0]
+        june = baskets[baskets["month"] == "2026-06"].iloc[0]
+        self.assertEqual(may["contractMode"], "legacy_wholesale_only")
+        self.assertEqual(float(may["fleetBasketRevenue"]), 0.0)
+        self.assertEqual(june["contractMode"], "separate_wholesale_and_fleet")
+        self.assertEqual(float(june["fleetBasketQuantity"]), 60.0)
+        self.assertEqual(float(june["fleetBasketRevenue"]), 6_000.0)
+        self.assertEqual(float(june["wholesaleBasketRevenue"]), 10_000.0)
+        self.assertAlmostEqual(
+            float(june["wholesaleBasketRevenue"] + june["fleetBasketRevenue"]),
+            float(june["kusRevenue"]),
+        )
+        self.assertEqual(float(june["revenueReconciliationDelta"]), 0.0)
+        self.assertEqual(float(june["quantityReconciliationDelta"]), 0.0)
 
 
 if __name__ == "__main__":

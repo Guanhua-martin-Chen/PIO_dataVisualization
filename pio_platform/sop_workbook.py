@@ -639,7 +639,7 @@ def _build_qa_assumptions(
         ("Brand policy", revenue["summary"].get("brandDefinition")),
         (
             "Wholesale denominator policy",
-            "Current runtime uses dealer/non-fleet wholesale. The approved KUS contract separates Wholesale and Carpet Floor Mat Fleet baskets from 2026-06; implementation and backtest are pending.",
+            "KUS uses separate Wholesale and model-year-2027 Carpet Floor Mat Fleet baskets from 2026-06. Fleet is allocated first at up to 100% penetration, and both baskets reconcile exactly to official KUS.",
         ),
         (
             "Lifecycle policy",
