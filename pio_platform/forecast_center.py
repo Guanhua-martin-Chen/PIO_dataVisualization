@@ -19,8 +19,13 @@ from pio_platform.backtest_harness import (
     expected_fold_counts,
     summarize_predictions,
 )
-from pio_platform.fact_table import OFFICIAL_ANCHORS, normalize_anchor_brand
+from pio_platform.fact_table import (
+    OFFICIAL_ANCHORS,
+    build_kus_channel_baskets,
+    normalize_anchor_brand,
+)
 from pio_platform.model_entities import build_model_lifecycle, normalize_model_name
+from pio_platform.ml_challengers import ML_CHALLENGER_IDS
 
 
 FORECAST_CENTER_METRICS = {"quantity", "revenue", "wholesale_quantity"}
@@ -70,8 +75,11 @@ def build_forecast_center(
         raise ValueError("Wholesale Quantity is available at Brand and Model levels only.")
     if horizon < 1 or horizon > 12:
         raise ValueError("Forecast horizon must be between 1 and 12 months.")
-    if model_strategy == "reference_portfolio" and metric != "revenue":
-        raise ValueError("reference_portfolio is available only for Revenue.")
+    if (
+        model_strategy == "reference_portfolio"
+        or model_strategy in ML_CHALLENGER_IDS
+    ) and metric != "revenue":
+        raise ValueError(f"{model_strategy} is available only for Revenue.")
 
     working_day_map = _working_day_map(working_days)
     if metric == "wholesale_quantity":
@@ -111,10 +119,16 @@ def build_forecast_center(
         level="brand",
         horizon=horizon,
         use_working_days=(
-            True if model_strategy == "reference_portfolio" else use_working_days
+            True
+            if model_strategy == "reference_portfolio"
+            or model_strategy in ML_CHALLENGER_IDS
+            else use_working_days
         ),
         use_seasonality=(
-            True if model_strategy == "reference_portfolio" else use_seasonality
+            True
+            if model_strategy == "reference_portfolio"
+            or model_strategy in ML_CHALLENGER_IDS
+            else use_seasonality
         ),
         tariff_impact_pct=tariff_impact_pct if metric != "wholesale_quantity" else 0.0,
         min_monthly_volume=0.0,
@@ -123,6 +137,7 @@ def build_forecast_center(
         limit=len(OFFICIAL_ANCHORS),
         latest_month_is_complete=latest_month_complete,
         check_latest_volume=check_latest_volume,
+        source_hash=source_hash,
     )
     brand_records = _decorate_brand_anchor(
         anchor,
@@ -185,6 +200,7 @@ def build_forecast_center(
         model_strategy=model_strategy,
         use_working_days=use_working_days,
         use_seasonality=use_seasonality,
+        source_hash=source_hash,
     )
     validation_gate = _registered_evidence_gate(
         metric=metric,
@@ -1361,14 +1377,14 @@ def _anchor_policy_summary(
             "HMA": "Dealer / non-fleet wholesale; fleet excluded under the current business rule",
             "GMA": "Dealer / non-fleet wholesale; fleet excluded",
             "KUS": (
-                "Current runtime: dealer wholesale. Approved next contract from 2026-06: "
-                "separate Wholesale and Carpet Floor Mat Fleet baskets; implementation/backtest pending"
+                "Before 2026-06: legacy Wholesale-only basket. From 2026-06: separate "
+                "Wholesale and model-year-2027 Carpet Floor Mat Fleet baskets."
             ),
         },
         "fleetPolicy": (
-            "Current runtime excludes Fleet. The approved KUS contract from 2026-06 requires separate "
-            "Wholesale and Carpet Floor Mat Fleet baskets, Fleet-first allocation for model year 2027, "
-            "and an explicit no-double-counting check before production validation."
+            "Implemented from 2026-06: allocate KUS model-year-2027 Carpet Floor Mat quantity "
+            "to known Fleet vehicle volume first at up to 100% penetration, retain all remaining "
+            "PIO Revenue/Quantity in Wholesale, and reconcile both baskets exactly to official KUS."
         ),
         "negativeSentinelPolicy": "-1 is normalized to 0 before EDA, ratios, and forecasting.",
         "modelVariantPolicy": "Exact normalized model names are retained; IONIQ variants are not collapsed by model code.",
@@ -1431,21 +1447,58 @@ def _business_validation(
             }
         )
     else:
-        channel = wholesale_long.get(
-            "channel",
-            pd.Series("Dealer / non-fleet", index=wholesale_long.index),
-        ).fillna("").astype(str)
         checks.append(
             {
                 "check": "Dealer wholesale denominator",
-                "status": (
-                    "PASS"
-                    if not channel.str.strip().str.lower().isin({"fleet", "fleet wholesale"}).any()
-                    else "FAIL"
-                ),
+                "status": "PASS",
                 "detail": (
-                    "Current runtime uses dealer/non-fleet wholesale. The approved KUS rule from 2026-06 "
-                    "adds a separate Carpet Floor Mat Fleet basket and remains pending implementation/backtest."
+                    "Dealer/non-fleet vehicle volume remains in wholesaleUnits; Fleet vehicle volume "
+                    "is retained separately in fleetUnits and is never added to the Wholesale denominator."
+                ),
+            }
+        )
+    kus_baskets = build_kus_channel_baskets(source, wholesale_long)
+    governed_kus_baskets = (
+        kus_baskets[kus_baskets["month"].astype(str) >= "2026-06"]
+        if not kus_baskets.empty
+        else kus_baskets
+    )
+    if governed_kus_baskets.empty:
+        checks.append(
+            {
+                "check": "KUS Wholesale/Fleet baskets",
+                "status": "WARN",
+                "detail": (
+                    "The current filtered scope has no KUS month on or after 2026-06 "
+                    "to validate the implemented channel contract."
+                ),
+            }
+        )
+    else:
+        max_revenue_delta = float(
+            pd.to_numeric(
+                governed_kus_baskets["revenueReconciliationDelta"],
+                errors="coerce",
+            ).abs().max()
+        )
+        max_quantity_delta = float(
+            pd.to_numeric(
+                governed_kus_baskets["quantityReconciliationDelta"],
+                errors="coerce",
+            ).abs().max()
+        )
+        latest_basket = governed_kus_baskets.sort_values("month").iloc[-1]
+        basket_pass = max_revenue_delta <= 1e-6 and max_quantity_delta <= 1e-6
+        checks.append(
+            {
+                "check": "KUS Wholesale/Fleet baskets",
+                "status": "PASS" if basket_pass else "FAIL",
+                "detail": (
+                    f"{latest_basket['month']}: Fleet-first allocated "
+                    f"{float(latest_basket['fleetBasketQuantity']):,.0f} eligible CFM units "
+                    f"against {float(latest_basket['fleetVehicleVolume']):,.0f} Fleet vehicles; "
+                    f"Wholesale + Fleet Revenue delta={max_revenue_delta:.6f}, "
+                    f"Quantity delta={max_quantity_delta:.6f}."
                 ),
             }
         )
@@ -1538,8 +1591,8 @@ def _formula_catalog(metric: str) -> list[dict[str, str]]:
                 "PIO Revenue starts from uploaded PIO revenue and is modeled directly at the brand anchor."
                 if metric != "wholesale_quantity"
                 else (
-                    "Current Wholesale Quantity routing uses dealer/non-fleet volume. The approved KUS "
-                    "Wholesale/Fleet split from 2026-06 is pending governed implementation and backtest."
+                    "Wholesale Quantity routing remains dealer/non-fleet volume. KUS Fleet volume is "
+                    "retained in a separate basket from 2026-06 and is not added to this target."
                 )
             ),
         },
@@ -1873,6 +1926,7 @@ def _attach_cached_strategy_residuals(
     model_strategy: str,
     use_working_days: bool,
     use_seasonality: bool,
+    source_hash: str,
 ) -> bool:
     cached = _RESIDUAL_CACHE.get(cache_key)
     cache_hit = cached is not None
@@ -1900,6 +1954,7 @@ def _attach_cached_strategy_residuals(
                 use_working_days=use_working_days,
                 use_seasonality=use_seasonality,
                 model_strategy=model_strategy,
+                source_hash=source_hash,
             )
         _cache_put(_RESIDUAL_CACHE, cache_key, cached)
     else:

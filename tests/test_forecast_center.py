@@ -17,6 +17,7 @@ from pio_platform.forecast_center import (
     clear_forecast_diagnostic_caches,
 )
 from pio_platform.ets_experiments import VALIDATED_REFERENCE_PORTFOLIO
+from pio_platform.ml_challengers import ML_CHALLENGER_IDS
 from pio_platform.sop_workbook import build_sop_workbook_bytes
 
 
@@ -150,6 +151,40 @@ class ForecastCenterTests(unittest.TestCase):
         formulas = {item["name"]: item for item in payload["summary"]["formulaCatalog"]}
         self.assertIn("SumOfPIS_CRP_CFM_PRI", formulas["Monthly target actual"]["formula"])
         self.assertIn("recent-6", formulas["Exact-part unit revenue"]["formula"])
+
+    def test_pretrained_ml_challengers_apply_july_mtd_after_offline_training(self) -> None:
+        with patch(
+            "pio_platform.forecast_center._allocation_accuracy_diagnostics",
+            return_value={},
+        ), patch(
+            "pio_platform.forecast_center._forecast_exceptions",
+            return_value=[],
+        ):
+            for model_id in sorted(ML_CHALLENGER_IDS):
+                payload = build_forecast_center(
+                    self.facts,
+                    self.working_days,
+                    self.wholesale,
+                    metric="revenue",
+                    level="brand",
+                    horizon=3,
+                    model_strategy=model_id,
+                    latest_sales_month_is_complete=False,
+                    latest_sales_date=pd.Timestamp("2026-07-28"),
+                    source_hash=VALIDATED_REFERENCE_PORTFOLIO["sourceHash"],
+                )
+                self.assertEqual(payload["summary"]["nowcastMonths"], ["2026-07"])
+                self.assertEqual(payload["summary"]["pureForecastMonths"], ["2026-08", "2026-09"])
+                self.assertEqual(payload["summary"]["factors"]["modelStrategy"], model_id)
+                for record in payload["brandRecords"]:
+                    july = record["forecast"][0]
+                    self.assertEqual(july["month"], "2026-07")
+                    self.assertEqual(july["forecastType"], "Nowcast")
+                    self.assertGreater(july["actualToDate"], 0.0)
+                    self.assertGreaterEqual(july["point"], july["actualToDate"])
+                    self.assertGreater(july["statisticalBaseline"], 0.0)
+                    self.assertEqual(record["requestedModelStrategy"], model_id)
+                    self.assertIn("No training occurred", record["selectionNote"])
 
     def test_wholesale_keeps_hma_gma_and_kus_as_separate_anchors(self) -> None:
         payload = build_forecast_center(

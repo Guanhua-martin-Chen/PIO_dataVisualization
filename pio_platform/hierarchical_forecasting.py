@@ -17,6 +17,13 @@ from pio_platform.ets_experiments import (
     VALIDATED_HMA_REVENUE_SPEC,
     forecast_ets_candidate,
 )
+from pio_platform.ml_challengers import (
+    ML_CHALLENGER_IDS,
+    artifact_entity_backtest,
+    artifact_residual_rows,
+    forecast_with_ml_challenger,
+    load_ml_challenger_artifact,
+)
 
 
 FORECAST_LEVELS = {"brand", "model", "model_accessory"}
@@ -31,6 +38,7 @@ MODEL_STRATEGIES = {
     "baseline_auto",
     "driver_adjusted_regression",
     "reference_portfolio",
+    *ML_CHALLENGER_IDS,
     *STATISTICAL_MODELS,
 }
 
@@ -50,6 +58,7 @@ def build_hierarchical_forecast(
     limit: int = 100,
     latest_month_is_complete: bool = False,
     check_latest_volume: bool = True,
+    source_hash: str = "",
 ) -> dict[str, Any]:
     if level not in FORECAST_LEVELS:
         raise ValueError(f"Unsupported forecast level: {level}")
@@ -60,6 +69,12 @@ def build_hierarchical_forecast(
     ):
         raise ValueError(
             "reference_portfolio is available only for Forecast Center Revenue Brand anchors."
+        )
+    if model_strategy in ML_CHALLENGER_IDS and (
+        level != "brand" or target_metric != "revenue"
+    ):
+        raise ValueError(
+            f"{model_strategy} is available only for Forecast Center Revenue Brand anchors."
         )
     if level == "model_accessory" and model_strategy != "auto":
         raise ValueError(
@@ -104,6 +119,11 @@ def build_hierarchical_forecast(
         historyVolume=("installationQuantity", "sum"),
     )
     working_day_map = _working_day_map(working_days)
+    ml_artifact = (
+        load_ml_challenger_artifact(model_strategy, source_hash)
+        if model_strategy in ML_CHALLENGER_IDS
+        else None
+    )
     records: list[dict[str, Any]] = []
     group_stats = (
         monthly.groupby(group_columns, as_index=False, dropna=False)
@@ -156,6 +176,7 @@ def build_hierarchical_forecast(
             use_working_days=use_working_days,
             use_seasonality=use_seasonality,
             model_strategy=model_strategy,
+            ml_artifact=ml_artifact,
         )
         evaluation = _independent_outer_backtest(
             series,
@@ -164,6 +185,7 @@ def build_hierarchical_forecast(
             use_working_days=use_working_days,
             use_seasonality=use_seasonality,
             model_strategy=model_strategy,
+            ml_artifact=ml_artifact,
         )
         selected_model = final_selection["model"]
         baseline_values = final_selection["forecast"]
@@ -218,6 +240,8 @@ def build_hierarchical_forecast(
     total_backtest_actual = sum(float(item["backtestActual"]) for item in records)
     total_backtest_error = sum(float(item["backtestAbsoluteError"]) for item in records)
     weighted_wape = total_backtest_error / total_backtest_actual if total_backtest_actual > 0 else None
+    if ml_artifact is not None:
+        weighted_wape = ml_artifact["evaluation"]["officialTotalMetrics"]["wape"]
     return {
         "summary": {
             "level": level,
@@ -255,8 +279,19 @@ def _select_forecast_candidate(
     use_working_days: bool,
     use_seasonality: bool,
     model_strategy: str,
+    ml_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     history = series.astype(float).tolist()
+    if model_strategy in ML_CHALLENGER_IDS:
+        if ml_artifact is None:
+            raise ValueError(f"{model_strategy} pretrained artifact is unavailable.")
+        return forecast_with_ml_challenger(
+            ml_artifact,
+            series,
+            entity=entity,
+            horizon=horizon,
+            working_days=working_day_map,
+        )
     if model_strategy == "reference_portfolio":
         return _reference_portfolio_selection(
             series,
@@ -340,7 +375,12 @@ def _independent_outer_backtest(
     use_working_days: bool,
     use_seasonality: bool,
     model_strategy: str,
+    ml_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if model_strategy in ML_CHALLENGER_IDS:
+        if ml_artifact is None:
+            raise ValueError(f"{model_strategy} pretrained artifact is unavailable.")
+        return artifact_entity_backtest(ml_artifact, entity)
     values = series.astype(float)
     holdout = min(6, max(3, len(values) // 4))
     split = len(values) - holdout
@@ -355,6 +395,7 @@ def _independent_outer_backtest(
         use_working_days=use_working_days,
         use_seasonality=use_seasonality,
         model_strategy=model_strategy,
+        ml_artifact=ml_artifact,
     )
     predictions: list[float] = []
     actuals: list[float] = []
@@ -416,11 +457,15 @@ def rolling_origin_residuals(
     use_working_days: bool,
     use_seasonality: bool,
     model_strategy: str,
+    source_hash: str = "",
     minimum_training_months: int = 24,
     horizons: tuple[int, ...] = (1, 2, 3),
 ) -> list[dict[str, Any]]:
     """Return complete H1/H2/H3 held-out rows for interval calibration."""
 
+    if model_strategy in ML_CHALLENGER_IDS:
+        artifact = load_ml_challenger_artifact(model_strategy, source_hash)
+        return artifact_residual_rows(artifact, entity)
     values = series.astype(float)
     if len(values) <= minimum_training_months:
         return []

@@ -26,6 +26,7 @@ from pio_platform.backtest_harness import (  # noqa: E402
 )
 from pio_platform.data_loader import load_dataset  # noqa: E402
 from pio_platform.fact_table import (  # noqa: E402
+    build_kus_channel_baskets,
     build_monthly_fact_table,
     build_wholesale_long,
 )
@@ -45,6 +46,7 @@ WHOLESALE_SHEETS = (
 )
 WORKING_DAYS_SHEET = "Working_Days"
 OFFICIAL_ANCHORS = ("HMA", "GMA", "KUS")
+KUS_BASKET_SCHEMA_VERSION = "kus-channel-baskets-v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -191,13 +193,18 @@ def load_governed_monthly(
     use_cache: bool,
 ) -> dict[str, Any]:
     cache_dir = PROJECT_ROOT / "outputs" / "backtest_cache"
-    cache_path = cache_dir / f"governed_monthly_{source_hash}_{CONTRACT_VERSION}.pkl"
+    cache_path = cache_dir / (
+        f"governed_monthly_{source_hash}_{CONTRACT_VERSION}_"
+        f"{KUS_BASKET_SCHEMA_VERSION}.pkl"
+    )
     if use_cache and cache_path.exists():
         with cache_path.open("rb") as handle:
             cached = pickle.load(handle)
         if (
             cached.get("sourceHash") == source_hash
             and cached.get("contractVersion") == CONTRACT_VERSION
+            and cached.get("kusBasketSchemaVersion") == KUS_BASKET_SCHEMA_VERSION
+            and "kusChannelBaskets" in cached.get("payload", {})
         ):
             payload = cached["payload"]
             if not payload.get("workingDays"):
@@ -214,6 +221,7 @@ def load_governed_monthly(
                         {
                             "sourceHash": source_hash,
                             "contractVersion": CONTRACT_VERSION,
+                            "kusBasketSchemaVersion": KUS_BASKET_SCHEMA_VERSION,
                             "payload": payload,
                         },
                         handle,
@@ -237,7 +245,10 @@ def load_governed_monthly(
         pd.concat(wholesale_parts, ignore_index=True)
         if wholesale_parts
         else pd.DataFrame(
-            columns=["month", "anchorBrand", "modelKey", "modelName", "wholesaleUnits"]
+            columns=[
+                "month", "anchorBrand", "modelKey", "modelName",
+                "wholesaleUnits", "fleetUnits",
+            ]
         )
     )
     if not wholesale_long.empty:
@@ -246,6 +257,7 @@ def load_governed_monthly(
             .agg(
                 modelName=("modelName", "first"),
                 wholesaleUnits=("wholesaleUnits", "sum"),
+                fleetUnits=("fleetUnits", "sum"),
             )
         )
 
@@ -266,6 +278,7 @@ def load_governed_monthly(
         model_code_col=roles.get("model_code") or "PIS_SERI",
         part_number_col=roles.get("part_number") or "PIS_PNO",
         part_description_col=roles.get("part_description") or "Part Description",
+        model_year_col=roles.get("model_year") or "PIS_MDL_YY",
         qty_col=roles.get("quantity") or "SumOfPIS_INST_QT",
         revenue_col=roles.get("revenue") or "SumOfPIS_CRP_CFM_PRI",
         plc_col=roles.get("plc") or "PLC",
@@ -290,6 +303,7 @@ def load_governed_monthly(
     )
     revenue = revenue[revenue["entity"].isin(OFFICIAL_ANCHORS)].copy()
     quantity = quantity[quantity["entity"].isin(OFFICIAL_ANCHORS)].copy()
+    kus_channel_baskets = build_kus_channel_baskets(facts, wholesale_long)
 
     wholesale = (
         wholesale_long.groupby(["month", "anchorBrand"], as_index=False)["wholesaleUnits"]
@@ -312,6 +326,8 @@ def load_governed_monthly(
         "pioRevenue": revenue,
         "pioQuantity": quantity,
         "wholesale": wholesale,
+        "kusChannelBaskets": kus_channel_baskets,
+        "kusBasketSchemaVersion": KUS_BASKET_SCHEMA_VERSION,
         "workingDays": working_days,
         "actualThrough": max_date.strftime("%Y-%m-%d"),
         "completedTrainingThrough": str(completed["period"].max()),
@@ -322,6 +338,7 @@ def load_governed_monthly(
             {
                 "sourceHash": source_hash,
                 "contractVersion": CONTRACT_VERSION,
+                "kusBasketSchemaVersion": KUS_BASKET_SCHEMA_VERSION,
                 "payload": payload,
             },
             handle,
