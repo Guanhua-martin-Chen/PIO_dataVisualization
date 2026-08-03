@@ -52,14 +52,20 @@ import {
   AnalystMemoryItem,
   AnomalyCenterPayload,
   API_BASE_URL,
+  EdaDataQualityPayload,
+  EdaEntitiesPayload,
+  EdaInitialPayload,
+  EdaLifecyclePayload,
+  EdaRelationshipPayload,
   ForecastCenterPayload,
   ForecastOutputRunPreview,
   ForecastPayload,
   HierarchicalForecastPayload,
-  MonthlyFactsPayload,
   PivotPayload,
+  SourceAnchorAuditPayload,
   WorkbookMeta,
   WorkspacePayload,
+  WorkspaceTablePayload,
   TableState,
   defaultTableState,
   forecastChartOption,
@@ -86,6 +92,21 @@ type InventorySource = {
   wape: number | null;
   forecastRisk: string;
   reliabilityTier: string;
+};
+
+type EdaSection = "initial" | "relationship" | "entities" | "lifecycle" | "data-quality";
+type EdaDetails = {
+  relationship?: EdaRelationshipPayload;
+  entities?: EdaEntitiesPayload;
+  lifecycle?: EdaLifecyclePayload;
+  "data-quality"?: EdaDataQualityPayload;
+};
+const EDA_LOADING_TEXT: Record<EdaSection, string> = {
+  initial: "Loading overview and rankings…",
+  relationship: "Loading… Calling the Wholesale relationship method.",
+  entities: "Loading… Calling the Model Entity method.",
+  lifecycle: "Loading… Calling the Lifecycle method.",
+  "data-quality": "Loading… Calling the Data Quality method.",
 };
 
 type InventoryPlanRow = InventorySource & {
@@ -155,9 +176,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [chartFilterState, setChartFilterState] = useState<TableState>(defaultTableState);
   const [chartData, setChartData] = useState<WorkspacePayload | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
-  const [edaLoading, setEdaLoading] = useState(false);
-  const [monthlyFacts, setMonthlyFacts] = useState<MonthlyFactsPayload | null>(null);
-  const [monthlyFactsLoading, setMonthlyFactsLoading] = useState(false);
+  const [edaLoading, setEdaLoading] = useState<Partial<Record<EdaSection, boolean>>>({});
+  const [edaInitial, setEdaInitial] = useState<EdaInitialPayload | null>(null);
+  const [edaDetails, setEdaDetails] = useState<EdaDetails>({});
+  const [activeEdaSection, setActiveEdaSection] = useState<EdaSection>("initial");
+  const [sourceAnchorAudit, setSourceAnchorAudit] = useState<SourceAnchorAuditPayload | null>(null);
+  const [sourceAnchorAuditLoading, setSourceAnchorAuditLoading] = useState(false);
   const [forecastFilterState, setForecastFilterState] = useState<TableState>(defaultTableState);
   const [forecastFilterOptions, setForecastFilterOptions] = useState<WorkspacePayload["filterOptions"] | null>(null);
   const [anomalyData, setAnomalyData] = useState<AnomalyCenterPayload | null>(null);
@@ -203,6 +227,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [pivotMeasure, setPivotMeasure] = useState("quantity");
   const [pivotAgg, setPivotAgg] = useState("sum");
   const [pivotDragField, setPivotDragField] = useState<string | null>(null);
+  const workspaceRequest = useRef<AbortController | null>(null);
+  const workspaceRequestId = useRef(0);
+  const edaRequests = useRef<Partial<Record<EdaSection, AbortController>>>({});
+  const edaRequestGeneration = useRef(0);
+  const edaIdentity = useRef("");
+  const sourceAnchorAuditRequest = useRef<AbortController | null>(null);
   const legacyForecastRequest = useRef<AbortController | null>(null);
   const forecastCenterRequest = useRef<AbortController | null>(null);
   const inventoryPlanningRequest = useRef<AbortController | null>(null);
@@ -297,6 +327,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   }, [visibleColumns, workspace, id]);
 
   useEffect(() => () => {
+    workspaceRequest.current?.abort();
+    Object.values(edaRequests.current).forEach((controller) => controller?.abort());
+    sourceAnchorAuditRequest.current?.abort();
     legacyForecastRequest.current?.abort();
     forecastCenterRequest.current?.abort();
     inventoryPlanningRequest.current?.abort();
@@ -383,22 +416,46 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     };
   }, [id]);
 
-  async function loadWorkspaceData(sheetName: string, state: TableState, silent = false, includeEdaDashboard = false) {
+  async function loadWorkspaceData(
+    sheetName: string,
+    state: TableState,
+    silent = false,
+    tableOnly = false,
+  ) {
     const params = buildWorkspaceParams(state);
-    if (includeEdaDashboard) {
-      params.set("include_eda_dashboard", "true");
-      setEdaLoading(true);
-    } else if (!silent) {
+    if (tableOnly) {
+      params.set("table_only", "true");
+    }
+    if (!silent) {
       setTableLoading(true);
     }
+    workspaceRequest.current?.abort();
+    const controller = new AbortController();
+    const requestId = workspaceRequestId.current + 1;
+    workspaceRequestId.current = requestId;
+    workspaceRequest.current = controller;
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}?${params.toString()}`
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}?${params.toString()}`,
+        { signal: controller.signal },
       );
       if (!response.ok) {
         throw new Error((await response.json()).detail ?? "Failed to load workspace sheet.");
       }
+      if (controller.signal.aborted || requestId !== workspaceRequestId.current) return;
+      if (tableOnly) {
+        const payload = (await response.json()) as WorkspaceTablePayload;
+        if (controller.signal.aborted || requestId !== workspaceRequestId.current) return;
+        setWorkspace((current) =>
+          current?.sheetName === payload.sheetName
+            ? { ...current, table: payload.table }
+            : current,
+        );
+        setTableState(state);
+        return;
+      }
       const payload = (await response.json()) as WorkspacePayload;
+      if (controller.signal.aborted || requestId !== workspaceRequestId.current) return;
       setWorkspace(payload);
       setTableState(state);
       const governedForecastSheet = (
@@ -409,6 +466,10 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         setForecastFilterOptions(payload.filterOptions);
       }
       const isNewSheet = !workspace || workspace.sheetName !== payload.sheetName;
+      sourceAnchorAuditRequest.current?.abort();
+      sourceAnchorAuditRequest.current = null;
+      setSourceAnchorAudit(null);
+      setSourceAnchorAuditLoading(false);
       if (isNewSheet || columnOrder.length === 0) {
         if (isNewSheet) {
           cancelForecastSurfaceRequests();
@@ -459,12 +520,71 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         }
       }
     } catch (err) {
+      if (isAbortError(err)) return;
       messageApi.error(err instanceof Error ? err.message : "Failed to load worksheet data.");
     } finally {
-      if (includeEdaDashboard) {
-        setEdaLoading(false);
-      } else if (!silent) {
-        setTableLoading(false);
+      if (workspaceRequest.current === controller) {
+        workspaceRequest.current = null;
+        if (!silent) {
+          setTableLoading(false);
+        }
+      }
+    }
+  }
+
+  function resetEdaSections() {
+    // Sheet/filter identity changes invalidate every previously loaded EDA section.
+    Object.values(edaRequests.current).forEach((controller) => controller?.abort());
+    edaRequests.current = {};
+    edaRequestGeneration.current += 1;
+    edaIdentity.current = "";
+    setEdaInitial(null);
+    setEdaDetails({});
+    setActiveEdaSection("initial");
+    setEdaLoading({});
+    sourceAnchorAuditRequest.current?.abort();
+    sourceAnchorAuditRequest.current = null;
+    setSourceAnchorAudit(null);
+    setSourceAnchorAuditLoading(false);
+  }
+
+  async function loadEdaSection(sheetName: string, state: TableState, section: EdaSection) {
+    // Request only the EDA section opened by the user and ignore superseded responses.
+    const params = buildWorkspaceParams({ ...state, page: 1 });
+    params.set("section", section);
+    const identity = `${sheetName}?${buildWorkspaceParams({ ...state, page: 1 }).toString()}`;
+    if (edaIdentity.current !== identity) {
+      resetEdaSections();
+      edaIdentity.current = identity;
+    }
+    if (edaRequests.current[section]) return;
+    const controller = new AbortController();
+    const requestGeneration = edaRequestGeneration.current;
+    edaRequests.current[section] = controller;
+    setActiveEdaSection(section);
+    setEdaLoading((current) => ({ ...current, [section]: true }));
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/eda?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (!response.ok) {
+        throw new Error((await response.json()).detail ?? "Failed to load EDA section.");
+      }
+      const payload = await response.json();
+      if (controller.signal.aborted || requestGeneration !== edaRequestGeneration.current || identity !== edaIdentity.current) return;
+      if (section === "initial") {
+        setEdaInitial(payload as EdaInitialPayload);
+      } else {
+        setEdaDetails((current) => ({ ...current, [section]: payload }) as EdaDetails);
+      }
+    } catch (err) {
+      if (isAbortError(err)) return;
+      messageApi.error(err instanceof Error ? err.message : "Failed to load EDA section.");
+    } finally {
+      if (edaRequests.current[section] === controller) {
+        delete edaRequests.current[section];
+        setEdaLoading((current) => ({ ...current, [section]: false }));
       }
     }
   }
@@ -477,12 +597,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       page: 1,
     };
     setTableState(nextState);
-    loadWorkspaceData(
-      workspace.sheetName,
-      nextState,
-      false,
-      dataSubTab === "eda" && !isEdaReferenceSheet(workspace.sheetName),
-    );
+    if (dataSubTab === "eda" && !isEdaReferenceSheet(workspace.sheetName)) {
+      loadEdaSection(workspace.sheetName, nextState, "initial");
+      return;
+    }
+    resetEdaSections();
+    loadWorkspaceData(workspace.sheetName, nextState);
   }
 
   async function loadChartData(sheetName: string, state: TableState) {
@@ -543,21 +663,30 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     }
   }
 
-  async function loadMonthlyFacts(sheetName: string, state: TableState, page = 1, pageSize = 100) {
-    const params = buildWorkspaceParams({ ...state, page, pageSize });
-    setMonthlyFactsLoading(true);
+  async function loadSourceAnchorAudit(sheetName: string, state: TableState) {
+    const params = buildWorkspaceParams({ ...state, page: 1 });
+    sourceAnchorAuditRequest.current?.abort();
+    const controller = new AbortController();
+    sourceAnchorAuditRequest.current = controller;
+    setSourceAnchorAuditLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/monthly-facts?${params.toString()}`
+        `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(sheetName)}/eda-source-anchor-audit?${params.toString()}`,
+        { signal: controller.signal },
       );
       if (!response.ok) {
-        throw new Error((await response.json()).detail ?? "Failed to build monthly facts.");
+        throw new Error((await response.json()).detail ?? "Failed to load Source Anchor Audit.");
       }
-      setMonthlyFacts((await response.json()) as MonthlyFactsPayload);
+      if (controller.signal.aborted) return;
+      setSourceAnchorAudit((await response.json()) as SourceAnchorAuditPayload);
     } catch (err) {
-      messageApi.error(err instanceof Error ? err.message : "Failed to build monthly facts.");
+      if (isAbortError(err)) return;
+      messageApi.error(err instanceof Error ? err.message : "Failed to load Source Anchor Audit.");
     } finally {
-      setMonthlyFactsLoading(false);
+      if (sourceAnchorAuditRequest.current === controller) {
+        sourceAnchorAuditRequest.current = null;
+        setSourceAnchorAuditLoading(false);
+      }
     }
   }
 
@@ -994,14 +1123,21 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     if (
       key === "eda"
       && workspace
-      && !workspace.edaDashboard
+      && !edaInitial
       && !isEdaReferenceSheet(workspace.sheetName)
     ) {
-      loadWorkspaceData(workspace.sheetName, tableState, true, true);
+      loadEdaSection(workspace.sheetName, tableState, "initial");
     }
-    if (key === "monthly-facts" && workspace) {
-      loadMonthlyFacts(workspace.sheetName, tableState, 1, monthlyFacts?.pageSize ?? 100);
+    if (key !== "eda" && dataSubTab === "eda" && workspace) {
+      loadWorkspaceData(workspace.sheetName, tableState, true);
     }
+  }
+
+  function handleEdaSectionChange(key: string) {
+    const section = key as EdaSection;
+    setActiveEdaSection(section);
+    if (!workspace || section === "initial" || edaDetails[section] || edaLoading[section]) return;
+    loadEdaSection(workspace.sheetName, tableState, section);
   }
 
   function loadForecastSurface(key: string) {
@@ -1156,7 +1292,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         workspace.sheetName,
         nextState,
         false,
-        dataSubTab === "eda" && !isEdaReferenceSheet(workspace.sheetName),
+        true,
       );
     }
   }
@@ -1519,19 +1655,28 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         </Card>
       );
     }
-    const eda = workspace?.edaDashboard;
+    const eda = edaInitial;
     if (!eda) {
       return (
         <Card className="content-card">
-          <Spin spinning={edaLoading}>
+          <Spin spinning={Boolean(edaLoading.initial)}>
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="Open this tab to build EDA metrics for the current filtered slice."
+              description="Loading overview and rankings for the current filtered slice."
             />
           </Spin>
         </Card>
       );
     }
+    const anchorAudit = sourceAnchorAudit ?? {
+      latestMonth: null,
+      summary: [],
+      sourceHModels: [],
+    };
+    const dataQuality = edaDetails["data-quality"]?.dataQuality;
+    const relationship = edaDetails.relationship?.relationship;
+    const modelEntities = edaDetails.entities?.modelEntities;
+    const modelLifecycle = edaDetails.lifecycle?.modelLifecycle;
 
     const topTableColumns: TableColumnsType<{ name: string; value: number }> = [
       {
@@ -1550,7 +1695,6 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     ];
 
     return (
-      <Spin spinning={edaLoading}>
         <div className="tab-stack">
           <Card className="content-card major-tab-intro">
             <div className="major-tab-header">
@@ -1564,7 +1708,44 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             </div>
           </Card>
 
-          <Row gutter={[18, 18]}>
+          <Tabs
+            className="workspace-subtabs"
+            activeKey={activeEdaSection}
+            onChange={handleEdaSectionChange}
+            items={[
+              {
+                key: "initial",
+                label: <span className="workspace-subtab-label"><strong>Overview & Rankings</strong><small>EDA summary</small></span>,
+              },
+              {
+                key: "relationship",
+                label: <span className="workspace-subtab-label"><strong>Wholesale Relationship</strong><small>PIO vs wholesale</small></span>,
+              },
+              {
+                key: "entities",
+                label: <span className="workspace-subtab-label"><strong>Model Entity</strong><small>Normalized models</small></span>,
+              },
+              {
+                key: "lifecycle",
+                label: <span className="workspace-subtab-label"><strong>Lifecycle</strong><small>Activity status</small></span>,
+              },
+              {
+                key: "data-quality",
+                label: <span className="workspace-subtab-label"><strong>Data Quality</strong><small>Source diagnostics</small></span>,
+              },
+            ]}
+          />
+
+          {activeEdaSection !== "initial" && edaLoading[activeEdaSection] ? (
+            <Card className="content-card">
+              <Space direction="vertical" align="center" style={{ display: "flex", padding: "32px 0" }}>
+                <Spin />
+                <Text type="secondary">{EDA_LOADING_TEXT[activeEdaSection]}</Text>
+              </Space>
+            </Card>
+          ) : null}
+
+          <Row gutter={[18, 18]} style={{ display: activeEdaSection === "initial" ? undefined : "none" }}>
             <Col xs={24} md={12} xl={6}>
               <Card className="metric-card">
                 <Statistic title="Rows in scope" value={formatMetric(eda.overview.rowCount)} />
@@ -1588,7 +1769,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           </Row>
 
           <Row gutter={[18, 18]}>
-            <Col xs={24} xl={8}>
+            <Col xs={24} xl={24} style={{ display: activeEdaSection === "initial" ? undefined : "none" }}>
               <Card className="content-card" title="Data overview" style={{ height: "100%" }}>
                 <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr", rowGap: 12 }}>
                   <div>
@@ -1614,7 +1795,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 </div>
               </Card>
             </Col>
-            <Col xs={24} xl={8}>
+            {activeEdaSection === "data-quality" && dataQuality ? <Col xs={24} xl={12}>
               <Card className="content-card" title="Missing value check" style={{ height: "100%" }}>
                 <Table
                   size="small"
@@ -1632,31 +1813,31 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                       render: (value: number) => `${value.toFixed(2)}%`,
                     },
                   ]}
-                  dataSource={eda.dataQuality.missing}
+                  dataSource={dataQuality.missing}
                 />
               </Card>
-            </Col>
-            <Col xs={24} xl={8}>
+            </Col> : null}
+            {activeEdaSection === "data-quality" && dataQuality ? <Col xs={24} xl={12}>
               <Card className="content-card" title="Outlier and consistency check" style={{ height: "100%" }}>
                 <div className="summary-stack">
-                  <div className="summary-row"><span className="summary-dot" /><span>Negative revenue rows: {eda.dataQuality.outliers.negativeRevenueRows}</span></div>
-                  <div className="summary-row"><span className="summary-dot" /><span>Negative quantity rows: {eda.dataQuality.outliers.negativeQuantityRows}</span></div>
-                  <div className="summary-row"><span className="summary-dot" /><span>Zero quantity rows: {eda.dataQuality.outliers.zeroQuantityRows}</span></div>
-                  <div className="summary-row"><span className="summary-dot" /><span>Unit price p01/p99 outliers: {eda.dataQuality.outliers.unitPriceOutlierRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Negative revenue rows: {dataQuality.outliers.negativeRevenueRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Negative quantity rows: {dataQuality.outliers.negativeQuantityRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Zero quantity rows: {dataQuality.outliers.zeroQuantityRows}</span></div>
+                  <div className="summary-row"><span className="summary-dot" /><span>Unit price p01/p99 outliers: {dataQuality.outliers.unitPriceOutlierRows}</span></div>
                   <div className="summary-row">
                     <span className="summary-dot" />
                     <span>
-                      Unit price range: {formatOptionalNumber(eda.dataQuality.outliers.unitPriceP01, true)} to{" "}
-                      {formatOptionalNumber(eda.dataQuality.outliers.unitPriceP99, true)}
+                      Unit price range: {formatOptionalNumber(dataQuality.outliers.unitPriceP01, true)} to{" "}
+                      {formatOptionalNumber(dataQuality.outliers.unitPriceP99, true)}
                     </span>
                   </div>
                 </div>
               </Card>
-            </Col>
+            </Col> : null}
           </Row>
 
           <Row gutter={[18, 18]}>
-            <Col xs={24} xl={10}>
+            <Col xs={24} xl={8} style={{ display: activeEdaSection === "initial" ? undefined : "none" }}>
               <Card className="content-card" title="Top brands">
                 <Table
                   size="small"
@@ -1667,58 +1848,68 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 />
               </Card>
             </Col>
-            <Col xs={24} xl={14}>
+            <Col xs={24} xl={8} style={{ display: activeEdaSection === "initial" ? undefined : "none" }}>
+              <Card className="content-card" title="Top models">
+                <Table size="small" rowKey="name" pagination={false} columns={topTableColumns} dataSource={eda.rankings.topModels} />
+              </Card>
+            </Col>
+            <Col xs={24} xl={8} style={{ display: activeEdaSection === "initial" ? undefined : "none" }}>
+              <Card className="content-card" title="Top parts">
+                <Table size="small" rowKey="name" pagination={false} columns={topTableColumns} dataSource={eda.rankings.topParts} />
+              </Card>
+            </Col>
+            {activeEdaSection === "relationship" && relationship ? <Col xs={24}>
               <Card className="content-card" title="Revenue and wholesale relationship" style={{ height: "100%" }}>
                 <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr", rowGap: 12 }}>
                   <div>
                     <span className="health-label">Monthly correlation</span>
-                    <strong>{formatOptionalNumber(eda.relationship.revenueWholesaleCorrelation, false, 3)}</strong>
+                    <strong>{formatOptionalNumber(relationship.revenueWholesaleCorrelation, false, 3)}</strong>
                   </div>
                   <div>
                     <span className="health-label">Model code coverage</span>
                     <strong>
-                      {eda.relationship.modelCodeCoveragePct === null
+                      {relationship.modelCodeCoveragePct === null
                         ? "N/A"
-                        : `${eda.relationship.modelCodeCoveragePct.toFixed(2)}%`}
+                        : `${relationship.modelCodeCoveragePct.toFixed(2)}%`}
                     </strong>
                   </div>
                   <div>
                     <span className="health-label">Sales model codes</span>
-                    <strong>{eda.relationship.salesModelCodes}</strong>
+                    <strong>{relationship.salesModelCodes}</strong>
                   </div>
                   <div>
                     <span className="health-label">Wholesale model codes</span>
-                    <strong>{eda.relationship.wholesaleModelCodes}</strong>
+                    <strong>{relationship.wholesaleModelCodes}</strong>
                   </div>
                   <div>
                     <span className="health-label">Model-name coverage</span>
                     <strong>
-                      {eda.relationship.modelNameCoveragePct === null
+                      {relationship.modelNameCoveragePct === null
                         ? "N/A"
-                        : `${eda.relationship.modelNameCoveragePct.toFixed(2)}%`}
+                        : `${relationship.modelNameCoveragePct.toFixed(2)}%`}
                     </strong>
                   </div>
                   <div>
                     <span className="health-label">Ambiguous model codes</span>
                     <strong>
-                      {eda.relationship.ambiguousSalesModelCodes.length} sales /{" "}
-                      {eda.relationship.ambiguousWholesaleModelCodes.length} wholesale
+                      {relationship.ambiguousSalesModelCodes.length} sales /{" "}
+                      {relationship.ambiguousWholesaleModelCodes.length} wholesale
                     </strong>
                   </div>
                 </div>
-                {eda.relationship.ambiguousWholesaleModelCodes.length ? (
+                {relationship.ambiguousWholesaleModelCodes.length ? (
                   <Alert
                     style={{ marginTop: 12 }}
                     type="warning"
                     showIcon
                     message="Model Code is not a unique vehicle key"
-                    description={eda.relationship.ambiguousWholesaleModelCodes
+                    description={relationship.ambiguousWholesaleModelCodes
                       .slice(0, 5)
                       .map((item) => `${item.value}: ${item.models.join(", ")}`)
                       .join(" · ")}
                   />
                 ) : null}
-                {eda.relationship.unmatchedSalesModelCodes.length ? (
+                {relationship.unmatchedSalesModelCodes.length ? (
                   <Alert
                     style={{ marginTop: 12 }}
                     type="warning"
@@ -1726,7 +1917,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     message="Unmatched PIS_SERI samples"
                     description={
                       <div className="summary-stack">
-                        {eda.relationship.unmatchedSalesModelCodes.map((item) => {
+                        {relationship.unmatchedSalesModelCodes.map((item) => {
                           const value = typeof item === "string" ? item : item.value;
                           const rows = typeof item === "string" ? [] : item.rows ?? [];
                           return (
@@ -1743,27 +1934,38 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   />
                 ) : null}
               </Card>
-            </Col>
+            </Col> : null}
           </Row>
 
-          <Row gutter={[18, 18]}>
+          {activeEdaSection === "data-quality" ? <Row gutter={[18, 18]}>
             <Col xs={24}>
               <Card
                 className="content-card"
-                title={`Source H/K code → official anchor audit${eda.sourceAnchorAudit.latestMonth ? ` (${eda.sourceAnchorAudit.latestMonth})` : ""}`}
+                title={`Source H/K code → official anchor audit${anchorAudit.latestMonth ? ` (${anchorAudit.latestMonth})` : ""}`}
+                extra={
+                  <Button
+                    type="primary"
+                    loading={sourceAnchorAuditLoading}
+                    onClick={() => workspace && loadSourceAnchorAudit(workspace.sheetName, tableState)}
+                  >
+                    Load Anchor Audit
+                  </Button>
+                }
               >
                 <Alert
                   type="warning"
                   showIcon
                   message="PIS_CMP_KND is a source-system code, not the final forecast brand"
-                  description="The tables below make the H/K-to-HMA/GMA/KUS mapping visible. In particular, Source H can contain Kia models, so the official anchor is assigned from the dealer-wholesale model mapping."
+                  description={sourceAnchorAudit
+                    ? "The tables below make the H/K-to-HMA/GMA/KUS mapping visible. In particular, Source H can contain Kia models, so the official anchor is assigned from the dealer-wholesale model mapping."
+                    : "This audit prepares governed monthly facts and runs only after you choose Load Anchor Audit."}
                   style={{ marginBottom: 16 }}
                 />
                 <Table
                   size="small"
                   pagination={false}
                   rowKey={(record) => `${record.sourceCode}:${record.anchorBrand}`}
-                  dataSource={eda.sourceAnchorAudit.summary}
+                  dataSource={anchorAudit.summary}
                   columns={[
                     { title: "Source code", dataIndex: "sourceCode", key: "sourceCode" },
                     {
@@ -1790,9 +1992,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 />
               </Card>
             </Col>
-          </Row>
+          </Row> : null}
 
-          <Row gutter={[18, 18]}>
+          {activeEdaSection === "data-quality" ? <Row gutter={[18, 18]}>
             <Col xs={24}>
               <Card className="content-card" title="Source H model, model-year, and sales-period audit">
                 <Paragraph className="workspace-copy">
@@ -1803,7 +2005,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   size="small"
                   rowKey={(record) => `${record.anchorBrand}:${record.modelName}`}
                   pagination={{ pageSize: 12, hideOnSinglePage: true }}
-                  dataSource={eda.sourceAnchorAudit.sourceHModels}
+                  dataSource={anchorAudit.sourceHModels}
                   columns={[
                     {
                       title: "Anchor",
@@ -1831,7 +2033,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                       render: (_: unknown, record) => `${record.firstSaleDate} to ${record.lastSaleDate}`,
                     },
                     {
-                      title: `${eda.sourceAnchorAudit.latestMonth ?? "Latest"} PIO Qty`,
+                      title: `${anchorAudit.latestMonth ?? "Latest"} PIO Qty`,
                       dataIndex: "latestMonthQuantity",
                       key: "latestMonthQuantity",
                       align: "right" as const,
@@ -1857,28 +2059,41 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 />
               </Card>
             </Col>
-          </Row>
+          </Row> : null}
 
-          <Row gutter={[18, 18]}>
+          {((activeEdaSection === "entities" && modelEntities) || (activeEdaSection === "lifecycle" && modelLifecycle)) ? <Row gutter={[18, 18]}>
             <Col xs={24}>
-              <Card className="content-card" title="Model entity mapping and lifecycle">
+              <Card className="content-card" title={activeEdaSection === "entities" ? "Model entity mapping" : "Model lifecycle"}>
                 <Paragraph className="workspace-copy">
                   Vehicle entities are keyed by brand and normalized model name. Model code is retained only as an attribute,
-                  so variants sharing a code remain distinct. Lifecycle status is calculated from positive PIO activity rather
-                  than manually assigned.
+                  so variants sharing a code remain distinct. Lifecycle status is calculated from positive PIO activity.
                 </Paragraph>
+                {activeEdaSection === "entities" && modelEntities ? <>
+                  <Statistic title="Model entities" value={modelEntities.count} style={{ marginBottom: 16 }} />
+                  <Table
+                    size="small"
+                    rowKey="entityKey"
+                    pagination={{ pageSize: 12, hideOnSinglePage: true }}
+                    columns={[
+                      { title: "Model", dataIndex: "modelName", key: "modelName" },
+                      { title: "Brand", dataIndex: "brand", key: "brand" },
+                      { title: "Model code(s)", dataIndex: "modelCodes", key: "modelCodes", render: (values: string[]) => values.join(", ") || "-" },
+                      { title: "Model year(s)", dataIndex: "modelYears", key: "modelYears", render: (values: string[]) => values.join(", ") || "-" },
+                      { title: "Rows", dataIndex: "rowCount", key: "rowCount", align: "right" as const },
+                    ]}
+                    dataSource={modelEntities.records}
+                  />
+                </> : null}
+                {activeEdaSection === "lifecycle" && modelLifecycle ? <>
                 <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
                   <Col xs={12} md={6}>
-                    <Statistic title="Model entities" value={eda.modelEntities.count} />
+                    <Statistic title={`Discontinued through ${modelLifecycle.cutoffYear}`} value={modelLifecycle.discontinuedCount} />
                   </Col>
                   <Col xs={12} md={6}>
-                    <Statistic title={`Discontinued through ${eda.modelLifecycle.cutoffYear}`} value={eda.modelLifecycle.discontinuedCount} />
+                    <Statistic title="Reintroduced" value={modelLifecycle.reintroducedCount} />
                   </Col>
                   <Col xs={12} md={6}>
-                    <Statistic title="Reintroduced" value={eda.modelLifecycle.reintroducedCount} />
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Statistic title="Lifecycle as of" value={eda.modelLifecycle.asOfMonth ?? "N/A"} />
+                    <Statistic title="Lifecycle as of" value={modelLifecycle.asOfMonth ?? "N/A"} />
                   </Col>
                 </Row>
                 <Table
@@ -1908,21 +2123,22 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     { title: "Restarted", dataIndex: "reintroducedMonth", key: "reintroducedMonth", render: (value: string | null) => value ?? "-" },
                     { title: "Code-derived evidence", dataIndex: "evidence", key: "evidence", ellipsis: true },
                   ]}
-                  dataSource={eda.modelLifecycle.records}
+                  dataSource={modelLifecycle.records}
                   scroll={{ x: 1050 }}
                 />
+                </> : null}
               </Card>
             </Col>
-          </Row>
+          </Row> : null}
 
-          <Row gutter={[18, 18]}>
+          {activeEdaSection === "data-quality" && dataQuality ? <Row gutter={[18, 18]}>
             <Col xs={24}>
               <Card className="content-card" title="Part number vs description discrepancies">
                 <Paragraph className="workspace-copy">
                   This check finds cases where one part number maps to multiple part descriptions. It helps catch naming drift,
                   duplicated descriptions, or source-system text changes before part-level analysis and forecasting.
                 </Paragraph>
-                {eda.dataQuality.partDescriptionIssues.length ? (
+                {dataQuality.partDescriptionIssues.length ? (
                   <Table
                     size="small"
                     rowKey="partNumber"
@@ -1949,101 +2165,15 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                         render: (values: string[]) => values.join(" | "),
                       },
                     ]}
-                    dataSource={eda.dataQuality.partDescriptionIssues}
+                    dataSource={dataQuality.partDescriptionIssues}
                   />
                 ) : (
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No part-description discrepancies found." />
                 )}
               </Card>
             </Col>
-          </Row>
+          </Row> : null}
         </div>
-      </Spin>
-    );
-  }
-
-  function renderMonthlyFacts() {
-    if (!monthlyFacts) {
-      return (
-        <Card className="content-card">
-          <Spin spinning={monthlyFactsLoading}>
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Open this tab to build the unified 2023–2026 monthly fact table." />
-          </Spin>
-        </Card>
-      );
-    }
-    return (
-      <div className="tab-stack">
-        <Alert
-          type="info"
-          showIcon
-          message="Forecasting source of truth"
-          description={`One row represents ${monthlyFacts.summary.grain}. PIO source brand stays visible, while HMA/GMA/KUS is the governed forecast anchor. Wholesale units are a dealer/non-fleet model-month reference and must not be summed across accessories.`}
-        />
-        <Row gutter={[18, 18]}>
-          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Fact rows" value={monthlyFacts.summary.rowCount} /></Card></Col>
-          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Months" value={monthlyFacts.summary.monthCount} /></Card></Col>
-          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Model entities" value={monthlyFacts.summary.modelCount} /></Card></Col>
-          <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Accessories" value={monthlyFacts.summary.partCount} /></Card></Col>
-        </Row>
-        <Row gutter={[18, 18]}>
-          <Col xs={24} md={12}>
-            <Card className="content-card" title="Coverage">
-              <div className="health-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                <div><span className="health-label">Period</span><strong>{monthlyFacts.summary.minMonth} to {monthlyFacts.summary.maxMonth}</strong></div>
-                <div><span className="health-label">Working Days</span><strong>{monthlyFacts.summary.workingDaysCoveragePct.toFixed(1)}%</strong></div>
-                <div><span className="health-label">Wholesale reference</span><strong>{monthlyFacts.summary.wholesaleCoveragePct.toFixed(1)}%</strong></div>
-                <div><span className="health-label">Anchor mapping coverage</span><strong>{monthlyFacts.summary.dealerWholesaleExactQuantityCoveragePct.toFixed(1)}%</strong></div>
-                <div><span className="health-label">Official anchors</span><strong>{monthlyFacts.summary.anchorCount}</strong></div>
-                <div><span className="health-label">PIO revenue</span><strong>{formatMetric(monthlyFacts.summary.totalRevenue, true)}</strong></div>
-              </div>
-            </Card>
-          </Col>
-          <Col xs={24} md={12}>
-            <Card className="content-card" title="Why this table exists">
-              <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                It converts transaction-like PIO rows and wide wholesale sheets into one auditable monthly grain used by brand,
-                model, and model-accessory forecasts. Working Days and lifecycle status are joined once here so every model uses
-                identical inputs.
-              </Paragraph>
-            </Card>
-          </Col>
-        </Row>
-        <Card className="content-card" title="Unified monthly facts">
-          <Table
-            size="small"
-            rowKey={(record) => `${record.month}-${record.entityKey}-${record.partNumber}`}
-            loading={monthlyFactsLoading}
-            dataSource={monthlyFacts.rows}
-            columns={[
-              { title: "Month", dataIndex: "month", key: "month", fixed: "left" as const },
-              { title: "Source H/K code", dataIndex: "brand", key: "brand" },
-              { title: "Anchor", dataIndex: "anchorBrand", key: "anchorBrand" },
-              { title: "Anchor mapping", dataIndex: "anchorMappingMethod", key: "anchorMappingMethod" },
-              { title: "Model", dataIndex: "modelName", key: "modelName" },
-              { title: "PLC", dataIndex: "plc", key: "plc" },
-              { title: "Accessory", dataIndex: "partNumber", key: "partNumber" },
-              { title: "Description", dataIndex: "partDescription", key: "partDescription", ellipsis: true },
-              { title: "Lifecycle", dataIndex: "lifecycleStatus", key: "lifecycleStatus" },
-              { title: "PIO qty", dataIndex: "installationQuantity", key: "installationQuantity", align: "right" as const, render: (value: number) => formatMetric(value) },
-              { title: "PIO revenue", dataIndex: "pioRevenue", key: "pioRevenue", align: "right" as const, render: (value: number) => formatMetric(value, true) },
-              { title: "Wholesale", dataIndex: "wholesaleUnits", key: "wholesaleUnits", align: "right" as const, render: (value: number | null) => value === null ? "-" : formatMetric(value) },
-              { title: "Units / vehicle", dataIndex: "accessoryUnitsPerVehicle", key: "accessoryUnitsPerVehicle", align: "right" as const, render: (value: number | null) => value === null ? "-" : formatOptionalNumber(value, false, 3) },
-              { title: "Revenue / vehicle (PNVW)", dataIndex: "revenuePerVehicle", key: "revenuePerVehicle", align: "right" as const, render: (value: number | null) => value === null ? "-" : formatOptionalNumber(value, true) },
-              { title: "Working days", dataIndex: "workingDays", key: "workingDays", align: "right" as const, render: (value: number | null) => value ?? "-" },
-              { title: "Qty/day", dataIndex: "quantityPerWorkingDay", key: "quantityPerWorkingDay", align: "right" as const, render: (value: number | null) => value === null ? "-" : value.toFixed(2) },
-            ]}
-            pagination={{
-              current: monthlyFacts.page,
-              pageSize: monthlyFacts.pageSize,
-              total: monthlyFacts.totalRows,
-              showSizeChanger: true,
-              onChange: (page, pageSize) => workspace && loadMonthlyFacts(workspace.sheetName, tableState, page, pageSize),
-            }}
-            scroll={{ x: 1500 }}
-          />
-        </Card>
-      </div>
     );
   }
 
@@ -2283,7 +2413,13 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
             sheetNames={workspace.workbook.sheetNames}
             onSheetChange={(value) => {
               setVisibleColumns([]);
-              loadWorkspaceData(value, { ...defaultTableState, pageSize: tableState.pageSize });
+              const nextState = { ...defaultTableState, pageSize: tableState.pageSize };
+              loadWorkspaceData(value, nextState);
+              if (dataSubTab === "eda" && !isEdaReferenceSheet(value)) {
+                loadEdaSection(value, nextState, "initial");
+              } else {
+                resetEdaSections();
+              }
             }}
           />
 
@@ -2504,16 +2640,6 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   </span>
                 ),
                 children: renderEdaDashboard(),
-              },
-              {
-                key: "monthly-facts",
-                label: (
-                  <span className="workspace-subtab-label">
-                    <strong>Monthly Facts</strong>
-                    <small>2023–2026</small>
-                  </span>
-                ),
-                children: renderMonthlyFacts(),
               },
               {
                 key: "pivot",
@@ -2871,8 +2997,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                         />
                         <Button
                           onClick={() => {
-                            setTableState({ ...defaultTableState, pageSize: tableState.pageSize });
-                            loadWorkspaceData(workspace.sheetName, { ...defaultTableState, pageSize: tableState.pageSize });
+                            handleFilterChange({ ...defaultTableState, pageSize: tableState.pageSize });
                           }}
                         >
                           Clear

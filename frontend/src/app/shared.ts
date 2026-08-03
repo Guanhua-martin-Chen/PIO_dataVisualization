@@ -26,7 +26,31 @@ export type LeaderMetric = {
   metric: "Revenue" | "Quantity";
 };
 
-export type EdaDashboardPayload = {
+export type SourceAnchorAuditPayload = {
+  latestMonth: string | null;
+  summary: Array<{
+    sourceCode: string;
+    anchorBrand: string;
+    pioQuantity: number;
+    pioRevenue: number;
+  }>;
+  sourceHModels: Array<{
+    sourceCode: "H";
+    anchorBrand: string;
+    modelName: string;
+    mappingMethod: string;
+    modelYears: string[];
+    salesYears: string[];
+    firstSaleDate: string;
+    lastSaleDate: string;
+    latestMonth: string;
+    latestMonthQuantity: number;
+    totalQuantity: number;
+    totalRevenue: number;
+  }>;
+};
+
+export type EdaInitialPayload = {
   overview: {
     rowCount: number;
     timeRange: { min: string | null; max: string | null };
@@ -37,6 +61,14 @@ export type EdaDashboardPayload = {
     totalRevenue: number | null;
     totalQuantity: number | null;
   };
+  rankings: {
+    topModels: Array<{ name: string; value: number }>;
+    topParts: Array<{ name: string; value: number }>;
+    topBrands: Array<{ name: string; value: number }>;
+  };
+};
+
+export type EdaDataQualityPayload = {
   dataQuality: {
     missing: Array<{ field: string; column: string | null; missing: number; missingPct: number }>;
     outliers: {
@@ -56,6 +88,9 @@ export type EdaDashboardPayload = {
       rows: number;
     }>;
   };
+};
+
+export type EdaRelationshipPayload = {
   monthly: Array<{
     month: string;
     pioRevenue: number;
@@ -63,11 +98,6 @@ export type EdaDashboardPayload = {
     wholesaleUnits: number | null;
     pnvw: number | null;
   }>;
-  rankings: {
-    topModels: Array<{ name: string; value: number }>;
-    topParts: Array<{ name: string; value: number }>;
-    topBrands: Array<{ name: string; value: number }>;
-  };
   relationship: {
     revenueWholesaleCorrelation: number | null;
     matchedModelCodes: number;
@@ -82,6 +112,9 @@ export type EdaDashboardPayload = {
     ambiguousWholesaleModelCodes: Array<{ value: string; models: string[] }>;
     unmatchedSalesModelCodes: Array<{ value: string; rows: number[] }>;
   };
+};
+
+export type EdaEntitiesPayload = {
   modelEntities: {
     count: number;
     records: Array<{
@@ -93,6 +126,9 @@ export type EdaDashboardPayload = {
       rowCount: number;
     }>;
   };
+};
+
+export type EdaLifecyclePayload = {
   modelLifecycle: {
     cutoffYear: number;
     asOfMonth: string | null;
@@ -115,29 +151,6 @@ export type EdaDashboardPayload = {
       longestInactiveGapMonths: number;
       inactiveMonthsAtDataEnd: number;
       evidence: string;
-    }>;
-  };
-  sourceAnchorAudit: {
-    latestMonth: string | null;
-    summary: Array<{
-      sourceCode: string;
-      anchorBrand: string;
-      pioQuantity: number;
-      pioRevenue: number;
-    }>;
-    sourceHModels: Array<{
-      sourceCode: "H";
-      anchorBrand: string;
-      modelName: string;
-      mappingMethod: string;
-      modelYears: string[];
-      salesYears: string[];
-      firstSaleDate: string;
-      lastSaleDate: string;
-      latestMonth: string;
-      latestMonthQuantity: number;
-      totalQuantity: number;
-      totalRevenue: number;
     }>;
   };
 };
@@ -217,54 +230,11 @@ export type WorkspacePayload = {
     modelYear: Array<{ label: string; value: string; count: number }>;
     part: Array<{ label: string; value: string; count: number }>;
   };
-  edaDashboard?: EdaDashboardPayload;
 };
 
-export type MonthlyFactsPayload = {
-  summary: {
-    rowCount: number;
-    monthCount: number;
-    minMonth: string | null;
-    maxMonth: string | null;
-    brandCount: number;
-    anchorCount: number;
-    modelCount: number;
-    plcCount: number;
-    partCount: number;
-    totalQuantity: number;
-    totalRevenue: number;
-    dealerWholesaleExactQuantityCoveragePct: number;
-    wholesaleCoveragePct: number;
-    workingDaysCoveragePct: number;
-    grain: string;
-  };
-  columns: string[];
-  rows: Array<{
-    month: string;
-    brand: string;
-    anchorBrand: string;
-    anchorMappingMethod: string;
-    entityKey: string;
-    modelName: string;
-    modelCode: string;
-    plc: string;
-    partNumber: string;
-    partDescription: string;
-    lifecycleStatus: string;
-    lifecycleStatusCode: string;
-    installationQuantity: number;
-    pioRevenue: number;
-    wholesaleUnits: number | null;
-    accessoryUnitsPerVehicle: number | null;
-    revenuePerVehicle: number | null;
-    pnvw: number | null;
-    workingDays: number | null;
-    quantityPerWorkingDay: number | null;
-    sourceRows: number;
-  }>;
-  page: number;
-  pageSize: number;
-  totalRows: number;
+export type WorkspaceTablePayload = {
+  sheetName: string;
+  table: WorkspacePayload["table"];
 };
 
 export type HierarchicalForecastPayload = {
