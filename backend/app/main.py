@@ -42,7 +42,6 @@ from pio_platform.fact_table import (
     build_monthly_fact_table,
     build_wholesale_long,
     build_working_days_long,
-    summarize_monthly_facts,
 )
 from pio_platform.model_entities import build_model_entity_map, build_model_lifecycle
 from pio_platform.hierarchical_forecasting import build_hierarchical_forecast
@@ -108,6 +107,8 @@ class WorkbookSession:
     sheet_names: list[str]
     bundles: dict[str, DatasetBundle] = field(default_factory=dict)
     monthly_facts: dict[str, pd.DataFrame] = field(default_factory=dict)
+    column_profiles: dict[str, pd.DataFrame] = field(default_factory=dict)
+    workspace_static: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 WORKBOOKS: dict[str, WorkbookSession] = {}
@@ -430,7 +431,7 @@ def get_workspace(
     sort_order: str = Query(default=""),
     start_date: str = Query(default=""),
     end_date: str = Query(default=""),
-    include_eda_dashboard: bool = Query(default=False),
+    table_only: bool = Query(default=False),
 ) -> dict[str, Any]:
     session = _get_session(workbook_id)
     return _build_workspace_payload(
@@ -449,7 +450,7 @@ def get_workspace(
         sort_order=sort_order,
         start_date=start_date,
         end_date=end_date,
-        include_eda_dashboard=include_eda_dashboard,
+        table_only=table_only,
     )
 
 
@@ -481,42 +482,89 @@ def get_part_forecast(
     )
 
 
-@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/monthly-facts")
-def get_monthly_facts(
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/eda-source-anchor-audit")
+def get_eda_source_anchor_audit(
     workbook_id: str,
     sheet_name: str,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=100, ge=10, le=200),
+    search: str = Query(default=""),
     brand: list[str] = Query(default=[]),
     model: list[str] = Query(default=[]),
+    model_year: list[str] = Query(default=[]),
     part: list[str] = Query(default=[]),
+    model_query: str = Query(default=""),
+    part_query: str = Query(default=""),
     start_date: str = Query(default=""),
     end_date: str = Query(default=""),
 ) -> dict[str, Any]:
     session = _get_session(workbook_id)
-    facts = _get_monthly_fact_table(session, sheet_name).copy()
-    if brand:
-        facts = _filter_fact_brand_values(facts, brand)
-    if model:
-        facts = facts[facts["modelName"].isin(model)]
-    if part:
-        facts = facts[facts["partNumber"].isin(part)]
-    if start_date:
-        facts = facts[facts["month"] >= str(start_date)[:7]]
-    if end_date:
-        facts = facts[facts["month"] <= str(end_date)[:7]]
+    bundle = _get_bundle(session, sheet_name)
+    filtered = _apply_filters(
+        bundle,
+        search=search,
+        brand=brand,
+        model=model,
+        model_year=model_year,
+        part=part,
+        model_query=model_query,
+        part_query=part_query,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    columns = _resolve_eda_sales_columns(bundle)
+    date_series = _eda_date_series(bundle, filtered, columns["date"])
+    revenue = _eda_numeric_series(filtered, columns["revenue"])
+    quantity = _eda_numeric_series(filtered, columns["quantity"])
+    return _build_eda_source_anchor_audit(
+        filtered,
+        columns,
+        date_series,
+        revenue,
+        quantity,
+        _get_monthly_fact_table(session, sheet_name),
+    )
 
-    total_rows = int(len(facts))
-    start = (page - 1) * page_size
-    page_df = facts.iloc[start : start + page_size]
-    return {
-        "summary": summarize_monthly_facts(facts),
-        "columns": list(facts.columns),
-        "rows": _dataframe_records(page_df),
-        "page": page,
-        "pageSize": page_size,
-        "totalRows": total_rows,
-    }
+
+@app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/eda")
+def get_eda_section(
+    workbook_id: str,
+    sheet_name: str,
+    section: str = Query(default="initial"),
+    search: str = Query(default=""),
+    brand: list[str] = Query(default=[]),
+    model: list[str] = Query(default=[]),
+    model_year: list[str] = Query(default=[]),
+    part: list[str] = Query(default=[]),
+    model_query: str = Query(default=""),
+    part_query: str = Query(default=""),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+) -> dict[str, Any]:
+    """Build only the EDA section requested by the current user action."""
+    session = _get_session(workbook_id)
+    bundle = _get_bundle(session, sheet_name)
+    filtered = _apply_filters(
+        bundle,
+        search=search,
+        brand=brand,
+        model=model,
+        model_year=model_year,
+        part=part,
+        model_query=model_query,
+        part_query=part_query,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if section == "initial":
+        return _build_eda_initial_payload(bundle, filtered)
+    if section == "relationship":
+        return _build_eda_relationship_payload(session, sheet_name, bundle, filtered)
+    if section == "entities":
+        return _build_eda_entities_payload(bundle, filtered)
+    if section == "lifecycle":
+        return _build_eda_lifecycle_payload(bundle, filtered)
+    if section == "data-quality":
+        return _build_eda_data_quality_payload(bundle, filtered)
+    raise HTTPException(status_code=400, detail="Unknown EDA section.")
 
 
 @app.get("/api/workbooks/{workbook_id}/sheets/{sheet_name}/hierarchical-forecast")
@@ -1438,7 +1486,7 @@ def _build_workspace_payload(
     sort_order: str = "",
     start_date: str = "",
     end_date: str = "",
-    include_eda_dashboard: bool = False,
+    table_only: bool = False,
 ) -> dict[str, Any]:
     bundle = _get_bundle(session, sheet_name)
     if bundle.dataframe.empty:
@@ -1464,6 +1512,21 @@ def _build_workspace_payload(
         sort_field=sort_field,
         sort_order=sort_order,
     )
+    if table_only:
+        return {"sheetName": sheet_name, "table": page_data}
+
+    static = _get_workspace_static(session, sheet_name, bundle)
+    has_filters = bool(
+        search
+        or brand
+        or model
+        or model_year
+        or part
+        or model_query
+        or part_query
+        or start_date
+        or end_date
+    )
     payload = {
         "workbook": {
             "id": session.workbook_id,
@@ -1471,11 +1534,11 @@ def _build_workspace_payload(
             "sheetNames": session.sheet_names,
         },
         "sheetName": sheet_name,
-        "profile": bundle.profile,
-        "roles": bundle.roles,
-        "overview": _build_overview(session.filename, sheet_name, bundle, filtered),
+        "profile": static["profile"],
+        "roles": static["roles"],
+        "overview": _build_overview(session, sheet_name, bundle, filtered),
         "table": page_data,
-        "classification": _build_field_classification(bundle),
+        "classification": static["classification"],
         "insights": _build_chart_payloads(session, sheet_name, bundle, filtered),
         "filters": {
             "search": search,
@@ -1488,92 +1551,115 @@ def _build_workspace_payload(
             "startDate": start_date,
             "endDate": end_date,
         },
-        "filterOptions": _build_filter_options(
-            bundle,
-            search=search,
-            brand=brand,
-            model=model,
-            model_year=model_year,
-            part=part,
-            model_query=model_query,
-            part_query=part_query,
-            start_date=start_date,
-            end_date=end_date,
+        "filterOptions": (
+            _build_filter_options(
+                bundle,
+                search=search,
+                brand=brand,
+                model=model,
+                model_year=model_year,
+                part=part,
+                model_query=model_query,
+                part_query=part_query,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if has_filters
+            else static["filterOptions"]
         ),
     }
-    if include_eda_dashboard:
-        payload["edaDashboard"] = _build_eda_dashboard(session, sheet_name, bundle, filtered)
     return payload
 
 
-def _build_eda_dashboard(
-    session: WorkbookSession,
-    sheet_name: str,
+def _build_eda_initial_payload(
     bundle: DatasetBundle,
     filtered_df: pd.DataFrame,
 ) -> dict[str, Any]:
-    df = filtered_df.copy()
+    """Return the lightweight EDA overview and leaderboards."""
+    df = filtered_df
     columns = _resolve_eda_sales_columns(bundle)
     date_series = _eda_date_series(bundle, df, columns["date"])
     revenue = _eda_numeric_series(df, columns["revenue"])
     quantity = _eda_numeric_series(df, columns["quantity"])
-    wholesale_long = _prepare_eda_wholesale_long(session, sheet_name)
-
-    overview = {
-        "rowCount": int(len(df)),
-        "timeRange": {
-            "min": date_series.min().date().isoformat() if date_series.notna().any() else None,
-            "max": date_series.max().date().isoformat() if date_series.notna().any() else None,
-        },
-        "modelCount": _eda_nunique(df, columns["model"]),
-        "modelCodeCount": _eda_nunique(df, columns["model_code"]),
-        "partCount": _eda_nunique(df, columns["part_number"]),
-        "brandCount": _eda_nunique(df, columns["brand"]),
-        "totalRevenue": _eda_float_or_none(revenue.sum()) if revenue is not None else None,
-        "totalQuantity": _eda_float_or_none(quantity.sum()) if quantity is not None else None,
-    }
-
-    monthly = _build_eda_monthly(df, columns, date_series, revenue, quantity, wholesale_long)
-    relationship = _build_eda_relationship(df, columns, monthly, wholesale_long, bundle.profile)
-    model_entities = build_model_entity_map(
-        df,
-        model_col=columns["model"],
-        brand_col=columns["brand"],
-        model_code_col=columns["model_code"],
-        model_year_col=bundle.roles.get("model_year"),
-    )
-    model_lifecycle = build_model_lifecycle(
-        df,
-        date_series,
-        model_col=columns["model"],
-        qty_col=columns["quantity"],
-        brand_col=columns["brand"],
-        model_code_col=columns["model_code"],
-        cutoff_year=2024,
-    )
-    source_anchor_audit = _build_eda_source_anchor_audit(
-        df,
-        columns,
-        date_series,
-        revenue,
-        quantity,
-        _get_monthly_fact_table(session, sheet_name),
-    )
-
     return {
-        "overview": overview,
-        "dataQuality": _build_eda_data_quality(df, columns, revenue, quantity),
-        "monthly": monthly,
+        "overview": {
+            "rowCount": int(len(df)),
+            "timeRange": {
+                "min": date_series.min().date().isoformat() if date_series.notna().any() else None,
+                "max": date_series.max().date().isoformat() if date_series.notna().any() else None,
+            },
+            "modelCount": _eda_nunique(df, columns["model"]),
+            "modelCodeCount": _eda_nunique(df, columns["model_code"]),
+            "partCount": _eda_nunique(df, columns["part_number"]),
+            "brandCount": _eda_nunique(df, columns["brand"]),
+            "totalRevenue": _eda_float_or_none(revenue.sum()) if revenue is not None else None,
+            "totalQuantity": _eda_float_or_none(quantity.sum()) if quantity is not None else None,
+        },
         "rankings": {
             "topModels": _eda_top_groups(df, columns["model"], revenue, quantity),
             "topParts": _eda_top_parts(df, columns, revenue, quantity),
             "topBrands": _eda_top_groups(df, columns["brand"], revenue, quantity),
         },
-        "relationship": relationship,
-        "modelEntities": model_entities,
-        "modelLifecycle": model_lifecycle,
-        "sourceAnchorAudit": source_anchor_audit,
     }
+
+
+def _build_eda_relationship_payload(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+    filtered_df: pd.DataFrame,
+) -> dict[str, Any]:
+    """Return monthly PIO-to-Wholesale data and relationship diagnostics."""
+    df = filtered_df
+    columns = _resolve_eda_sales_columns(bundle)
+    date_series = _eda_date_series(bundle, df, columns["date"])
+    revenue = _eda_numeric_series(df, columns["revenue"])
+    quantity = _eda_numeric_series(df, columns["quantity"])
+    wholesale_long = _prepare_eda_wholesale_long(session, sheet_name)
+    monthly = _build_eda_monthly(df, columns, date_series, revenue, quantity, wholesale_long)
+    return {
+        "monthly": monthly,
+        "relationship": _build_eda_relationship(df, columns, monthly, wholesale_long, bundle.profile),
+    }
+
+
+def _build_eda_entities_payload(bundle: DatasetBundle, filtered_df: pd.DataFrame) -> dict[str, Any]:
+    """Return normalized Model Entity records for the filtered sales slice."""
+    columns = _resolve_eda_sales_columns(bundle)
+    return {
+        "modelEntities": build_model_entity_map(
+            filtered_df,
+            model_col=columns["model"],
+            brand_col=columns["brand"],
+            model_code_col=columns["model_code"],
+            model_year_col=bundle.roles.get("model_year"),
+        )
+    }
+
+
+def _build_eda_lifecycle_payload(bundle: DatasetBundle, filtered_df: pd.DataFrame) -> dict[str, Any]:
+    """Return activity-derived lifecycle status for the filtered Model Entities."""
+    columns = _resolve_eda_sales_columns(bundle)
+    date_series = _eda_date_series(bundle, filtered_df, columns["date"])
+    return {
+        "modelLifecycle": build_model_lifecycle(
+            filtered_df,
+            date_series,
+            model_col=columns["model"],
+            qty_col=columns["quantity"],
+            brand_col=columns["brand"],
+            model_code_col=columns["model_code"],
+            cutoff_year=2024,
+        )
+    }
+
+
+def _build_eda_data_quality_payload(bundle: DatasetBundle, filtered_df: pd.DataFrame) -> dict[str, Any]:
+    """Return missing-value, outlier, and part-description diagnostics."""
+    columns = _resolve_eda_sales_columns(bundle)
+    revenue = _eda_numeric_series(filtered_df, columns["revenue"])
+    quantity = _eda_numeric_series(filtered_df, columns["quantity"])
+    return {"dataQuality": _build_eda_data_quality(filtered_df, columns, revenue, quantity)}
 
 
 def _build_eda_source_anchor_audit(
@@ -2144,20 +2230,39 @@ def _eda_month_number_from_column(column: Any) -> int | None:
     return months.get(label)
 
 
-def _get_column_profile(bundle: DatasetBundle) -> pd.DataFrame:
-    if not hasattr(bundle, "_cached_column_profile"):
-        bundle._cached_column_profile = build_column_profile(bundle.dataframe, bundle.date_candidates)
-    return bundle._cached_column_profile
+def _get_column_profile(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+) -> pd.DataFrame:
+    if sheet_name not in session.column_profiles:
+        session.column_profiles[sheet_name] = build_column_profile(bundle.dataframe, bundle.date_candidates)
+    return session.column_profiles[sheet_name]
+
+
+def _get_workspace_static(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+) -> dict[str, Any]:
+    if sheet_name not in session.workspace_static:
+        session.workspace_static[sheet_name] = {
+            "profile": bundle.profile,
+            "roles": bundle.roles,
+            "classification": _build_field_classification(session, sheet_name, bundle),
+            "filterOptions": _build_filter_options(bundle),
+        }
+    return session.workspace_static[sheet_name]
 
 
 def _build_overview(
-    filename: str,
+    session: WorkbookSession,
     sheet_name: str,
     bundle: DatasetBundle,
     filtered_df: pd.DataFrame,
 ) -> dict[str, Any]:
     kpis = compute_kpis(filtered_df, bundle.roles)
-    profile_df = _get_column_profile(bundle)
+    profile_df = _get_column_profile(session, sheet_name, bundle)
     health = {
         "dateFieldCount": len(bundle.date_fields),
         "numericFieldCount": len(bundle.numeric_fields),
@@ -2168,7 +2273,7 @@ def _build_overview(
 
     date_summary = _date_summary(bundle, filtered_df)
     summary = [
-        f"{filename} / {sheet_name} has {bundle.profile['row_count']:,} rows across {bundle.profile['column_count']} columns.",
+        f"{session.filename} / {sheet_name} has {bundle.profile['row_count']:,} rows across {bundle.profile['column_count']} columns.",
         date_summary,
         f"Detected {health['mappedRoleCount']} business-ready fields for planning workflows.",
     ]
@@ -2235,7 +2340,7 @@ def _build_overview(
     stats["completenessRate"] = float(100.0 - profile_df["Missing %"].mean())
 
     return {
-        "datasetTitle": filename,
+        "datasetTitle": session.filename,
         "sheetName": sheet_name,
         "kpis": kpis,
         "summary": summary,
@@ -2246,9 +2351,13 @@ def _build_overview(
     }
 
 
-def _build_field_classification(bundle: DatasetBundle) -> dict[str, list[dict[str, Any]]]:
+def _build_field_classification(
+    session: WorkbookSession,
+    sheet_name: str,
+    bundle: DatasetBundle,
+) -> dict[str, list[dict[str, Any]]]:
     inverse_roles = {column: role for role, column in bundle.roles.items()}
-    profile_df = _get_column_profile(bundle)
+    profile_df = _get_column_profile(session, sheet_name, bundle)
     groups: dict[str, list[dict[str, Any]]] = {group: [] for group in GROUP_ORDER}
 
 
