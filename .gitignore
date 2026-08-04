@@ -40,3 +40,6 @@ work/
 # ── Streamlit config ────────────────────────────────────
 .streamlit/
 work/awesome-design-md/
+
+# ── Local-only sponsor/reference material ───────────────
+private_reference_templates/
