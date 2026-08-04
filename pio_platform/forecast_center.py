@@ -25,11 +25,23 @@ from pio_platform.fact_table import (
     normalize_anchor_brand,
 )
 from pio_platform.model_entities import build_model_lifecycle, normalize_model_name
-from pio_platform.ml_challengers import ML_CHALLENGER_IDS
+from pio_platform.ml_challengers import ML_CHALLENGER_IDS, load_ml_challenger_artifact
 
 
 FORECAST_CENTER_METRICS = {"quantity", "revenue", "wholesale_quantity"}
 FORECAST_CENTER_LEVELS = {"brand", "model", "plc", "model_plc"}
+FORECAST_CENTER_SURFACES = {
+    "all",
+    "brand",
+    "model",
+    "plc",
+    "model_plc",
+    "exceptions",
+    "validation",
+    "intervals",
+    "allocation_accuracy",
+    "leaderboard",
+}
 BRAND_NAMES = {
     "HMA": "Hyundai Motor America",
     "GMA": "Genesis Motor America",
@@ -53,6 +65,7 @@ def build_forecast_center(
     *,
     metric: str,
     level: str,
+    surface: str = "all",
     horizon: int = 3,
     use_working_days: bool = True,
     use_seasonality: bool = True,
@@ -71,6 +84,8 @@ def build_forecast_center(
         raise ValueError(f"Unsupported Forecast Center metric: {metric}")
     if level not in FORECAST_CENTER_LEVELS:
         raise ValueError(f"Unsupported Forecast Center level: {level}")
+    if surface not in FORECAST_CENTER_SURFACES:
+        raise ValueError(f"Unsupported Forecast Center surface: {surface}")
     if metric == "wholesale_quantity" and level in {"plc", "model_plc"}:
         raise ValueError("Wholesale Quantity is available at Brand and Model levels only.")
     if horizon < 1 or horizon > 12:
@@ -92,7 +107,7 @@ def build_forecast_center(
         source = _prepare_pio_anchor_facts(facts)
         target_column = METRIC_COLUMNS[metric]
         if target_column not in source.columns:
-            return _empty_payload(metric, level, horizon, top_n)
+            return _empty_payload(metric, level, surface, horizon, top_n)
         source["installationQuantity"] = pd.to_numeric(
             source["installationQuantity"],
             errors="coerce",
@@ -111,7 +126,7 @@ def build_forecast_center(
         check_latest_volume = True
 
     if source.empty:
-        return _empty_payload(metric, level, horizon, top_n)
+        return _empty_payload(metric, level, surface, horizon, top_n)
 
     anchor = build_hierarchical_forecast(
         anchor_source,
@@ -148,60 +163,73 @@ def build_forecast_center(
     )
     latest_complete_month = anchor["summary"].get("latestCompleteMonth")
     if not latest_complete_month:
-        return _empty_payload(metric, level, horizon, top_n)
-    source_signature, working_day_signature = _diagnostic_source_signatures(
-        source,
-        working_days,
-    )
-    residual_scope_key = _diagnostic_scope_cache_key(
-        source,
-        working_days,
-        source_signature=source_signature,
-        working_day_signature=working_day_signature,
-        source_hash=source_hash,
-        cutoff=str(latest_complete_month),
-        metric=metric,
-        model_strategy=model_strategy,
-        use_working_days=use_working_days,
-        use_seasonality=use_seasonality,
-        min_monthly_volume=min_monthly_volume,
-        horizon=3,
-        tariff_impact_pct=0.0,
-        latest_sales_date=None,
-        latest_sales_month_is_complete=True,
-        evaluation_scope_eligible=evaluation_scope_eligible,
-        evaluation_scope_metadata=evaluation_scope_metadata or {},
-    )
-    diagnostic_scope_key = _diagnostic_scope_cache_key(
-        source,
-        working_days,
-        source_signature=source_signature,
-        working_day_signature=working_day_signature,
-        source_hash=source_hash,
-        cutoff=str(latest_complete_month),
-        metric=metric,
-        model_strategy=model_strategy,
-        use_working_days=use_working_days,
-        use_seasonality=use_seasonality,
-        min_monthly_volume=min_monthly_volume,
-        horizon=horizon,
-        tariff_impact_pct=tariff_impact_pct,
-        latest_sales_date=latest_source_date,
-        latest_sales_month_is_complete=latest_month_complete,
-        evaluation_scope_eligible=evaluation_scope_eligible,
-        evaluation_scope_metadata=evaluation_scope_metadata or {},
-    )
-    residual_cache_hit = _attach_cached_strategy_residuals(
-        brand_records,
-        anchor_source,
-        working_day_map,
-        cache_key=residual_scope_key,
-        latest_complete_month=str(latest_complete_month),
-        model_strategy=model_strategy,
-        use_working_days=use_working_days,
-        use_seasonality=use_seasonality,
-        source_hash=source_hash,
-    )
+        return _empty_payload(metric, level, surface, horizon, top_n)
+    needs_model = include_all_records or surface in {
+        "all", "model", "plc", "model_plc", "exceptions"
+    }
+    needs_plc = include_all_records or surface in {"all", "plc", "model_plc", "exceptions"}
+    needs_validation = surface in {"all", "validation", "intervals"}
+    needs_intervals = surface in {"all", "intervals"}
+    needs_allocation_accuracy = surface in {"all", "allocation_accuracy"}
+    needs_exceptions = surface in {"all", "exceptions"}
+
+    diagnostic_scope_key = ""
+    residual_cache_hit = False
+    if needs_validation or needs_allocation_accuracy or needs_exceptions:
+        source_signature, working_day_signature = _diagnostic_source_signatures(
+            source,
+            working_days,
+        )
+        diagnostic_scope_key = _diagnostic_scope_cache_key(
+            source,
+            working_days,
+            source_signature=source_signature,
+            working_day_signature=working_day_signature,
+            source_hash=source_hash,
+            cutoff=str(latest_complete_month),
+            metric=metric,
+            model_strategy=model_strategy,
+            use_working_days=use_working_days,
+            use_seasonality=use_seasonality,
+            min_monthly_volume=min_monthly_volume,
+            horizon=horizon,
+            tariff_impact_pct=tariff_impact_pct,
+            latest_sales_date=latest_source_date,
+            latest_sales_month_is_complete=latest_month_complete,
+            evaluation_scope_eligible=evaluation_scope_eligible,
+            evaluation_scope_metadata=evaluation_scope_metadata or {},
+        )
+        if needs_validation:
+            residual_scope_key = _diagnostic_scope_cache_key(
+                source,
+                working_days,
+                source_signature=source_signature,
+                working_day_signature=working_day_signature,
+                source_hash=source_hash,
+                cutoff=str(latest_complete_month),
+                metric=metric,
+                model_strategy=model_strategy,
+                use_working_days=use_working_days,
+                use_seasonality=use_seasonality,
+                min_monthly_volume=min_monthly_volume,
+                horizon=3,
+                tariff_impact_pct=0.0,
+                latest_sales_date=None,
+                latest_sales_month_is_complete=True,
+                evaluation_scope_eligible=evaluation_scope_eligible,
+                evaluation_scope_metadata=evaluation_scope_metadata or {},
+            )
+            residual_cache_hit = _attach_cached_strategy_residuals(
+                brand_records,
+                anchor_source,
+                working_day_map,
+                cache_key=residual_scope_key,
+                latest_complete_month=str(latest_complete_month),
+                model_strategy=model_strategy,
+                use_working_days=use_working_days,
+                use_seasonality=use_seasonality,
+                source_hash=source_hash,
+            )
     validation_gate = _registered_evidence_gate(
         metric=metric,
         model_strategy=model_strategy,
@@ -223,7 +251,10 @@ def build_forecast_center(
                 record["backtestPoints"] = VALIDATED_REFERENCE_PORTFOLIO["foldCount"]
                 record["backtestModel"] = record.get("selectedModel", "")
 
-    if metric == "wholesale_quantity":
+    model_records: list[dict[str, Any]] = []
+    plc_records: list[dict[str, Any]] = []
+    top_accessories: list[dict[str, Any]] = []
+    if metric == "wholesale_quantity" and needs_model:
         model_records = _allocate_records(
             source,
             metric=metric,
@@ -235,9 +266,7 @@ def build_forecast_center(
             use_working_days=use_working_days,
             min_monthly_volume=min_monthly_volume,
         )
-        plc_records: list[dict[str, Any]] = []
-        top_accessories: list[dict[str, Any]] = []
-    else:
+    elif metric != "wholesale_quantity" and needs_model:
         model_records = _allocate_records(
             source,
             metric=metric,
@@ -249,69 +278,88 @@ def build_forecast_center(
             use_working_days=use_working_days,
             min_monthly_volume=min_monthly_volume,
         )
-        plc_records = _allocate_records(
-            source,
-            metric=metric,
-            child_dimensions=["brand", "entityKey", "modelName", "plc"],
-            parent_dimensions=["brand", "entityKey", "modelName"],
-            parent_records=model_records,
-            latest_complete_month=latest_complete_month,
-            working_day_map=working_day_map,
-            use_working_days=use_working_days,
-            min_monthly_volume=min_monthly_volume,
-        )
-        top_accessories = _aggregate_top_plcs(
-            source,
-            plc_records,
-            latest_complete_month=latest_complete_month,
-            top_n=top_n,
-        )
-
-    evaluation_scopes = _evaluation_scopes(
-        metric=metric,
-        source_hash=source_hash,
-        latest_complete_month=str(latest_complete_month),
-        brand_records=brand_records,
-        validation_gate=validation_gate,
-    )
-    interval_summary = _apply_prediction_intervals(
-        brand_records,
-        model_records,
-        plc_records,
-        evaluation_scopes=evaluation_scopes,
-        validation_applies=validation_applies,
-    )
-    cached_governance = _GOVERNANCE_DIAGNOSTIC_CACHE.get(diagnostic_scope_key)
-    governance_cache_hit = cached_governance is not None
-    if cached_governance is None:
-        cached_governance = {
-            "allocationAccuracy": _allocation_accuracy_diagnostics(
+        if needs_plc:
+            plc_records = _allocate_records(
                 source,
                 metric=metric,
-                latest_complete_month=str(latest_complete_month),
-                source_hash=source_hash,
-            ),
-            "forecastExceptions": _forecast_exceptions(
-                source,
-                model_records,
-                plc_records,
-                [],
-                metric=metric,
-                latest_complete_month=str(latest_complete_month),
+                child_dimensions=["brand", "entityKey", "modelName", "plc"],
+                parent_dimensions=["brand", "entityKey", "modelName"],
+                parent_records=model_records,
+                latest_complete_month=latest_complete_month,
+                working_day_map=working_day_map,
+                use_working_days=use_working_days,
                 min_monthly_volume=min_monthly_volume,
-            ),
-        }
-        _cache_put(
-            _GOVERNANCE_DIAGNOSTIC_CACHE,
-            diagnostic_scope_key,
-            cached_governance,
-        )
-    else:
-        _GOVERNANCE_DIAGNOSTIC_CACHE.move_to_end(diagnostic_scope_key)
-    allocation_accuracy = deepcopy(cached_governance["allocationAccuracy"])
-    forecast_exceptions = deepcopy(cached_governance["forecastExceptions"])
+            )
+            top_accessories = _aggregate_top_plcs(
+                source,
+                plc_records,
+                latest_complete_month=latest_complete_month,
+                top_n=top_n,
+            )
 
-    if level == "brand":
+    evaluation_scopes = (
+        _evaluation_scopes(
+            metric=metric,
+            source_hash=source_hash,
+            latest_complete_month=str(latest_complete_month),
+            brand_records=brand_records,
+            validation_gate=validation_gate,
+        )
+        if needs_validation
+        else []
+    )
+    interval_summary = (
+        _apply_prediction_intervals(
+            brand_records,
+            model_records,
+            plc_records,
+            evaluation_scopes=evaluation_scopes,
+            validation_applies=validation_applies,
+        )
+        if needs_intervals
+        else {
+            "nominalCoverage": 0.90,
+            "officialTotal": [],
+            "brands": [],
+            "childCoveragePolicy": "Open Prediction Intervals to calculate interval coverage.",
+        }
+    )
+    cached_governance = (
+        _GOVERNANCE_DIAGNOSTIC_CACHE.get(diagnostic_scope_key, {})
+        if needs_allocation_accuracy or needs_exceptions
+        else {}
+    )
+    governance_cache_hit = bool(cached_governance)
+    cache_changed = False
+    if needs_allocation_accuracy and "allocationAccuracy" not in cached_governance:
+        cached_governance["allocationAccuracy"] = _allocation_accuracy_diagnostics(
+            source,
+            metric=metric,
+            latest_complete_month=str(latest_complete_month),
+            source_hash=source_hash,
+        )
+        cache_changed = True
+    if needs_exceptions and "forecastExceptions" not in cached_governance:
+        cached_governance["forecastExceptions"] = _forecast_exceptions(
+            source,
+            model_records,
+            plc_records,
+            [],
+            metric=metric,
+            latest_complete_month=str(latest_complete_month),
+            min_monthly_volume=min_monthly_volume,
+        )
+        cache_changed = True
+    if cache_changed:
+        _cache_put(_GOVERNANCE_DIAGNOSTIC_CACHE, diagnostic_scope_key, cached_governance)
+    elif cached_governance:
+        _GOVERNANCE_DIAGNOSTIC_CACHE.move_to_end(diagnostic_scope_key)
+    allocation_accuracy = deepcopy(cached_governance.get("allocationAccuracy", []))
+    forecast_exceptions = deepcopy(cached_governance.get("forecastExceptions", []))
+
+    if surface in {"validation", "intervals", "allocation_accuracy", "exceptions"}:
+        display_records = brand_records
+    elif level == "brand":
         display_records = brand_records
     elif level == "model":
         display_records = model_records
@@ -321,7 +369,16 @@ def build_forecast_center(
         top_plcs = {str(record["plc"]) for record in top_accessories}
         display_records = [record for record in plc_records if str(record.get("plc", "")) in top_plcs]
 
-    reconciliation = _reconciliation_checks(brand_records, model_records, plc_records)
+    reconciliation = (
+        _reconciliation_checks(brand_records, model_records, plc_records)
+        if needs_model
+        else {
+            "status": "NOT_LOADED",
+            "brandToModelMaxAbsDelta": 0.0,
+            "modelToPlcMaxAbsDelta": 0.0,
+            "tolerance": 0.01,
+        }
+    )
     allocation_routing = _allocation_routing_summary(model_records, plc_records)
     model_counts = Counter(str(record.get("selectedModel", "")) for record in brand_records)
     forecast_months = _forecast_months(brand_records)
@@ -340,6 +397,7 @@ def build_forecast_center(
         "metricLabel": METRIC_LABELS[metric],
         "unit": "USD" if metric == "revenue" else "units",
         "level": level,
+        "loadedSurface": surface,
         "seriesCount": len(display_records),
         "allModelSeriesCount": len(model_records),
         "allModelPlcSeriesCount": len(plc_records),
@@ -398,9 +456,23 @@ def build_forecast_center(
         "accuracyScope": _accuracy_scope(metric),
         "evaluationScopes": evaluation_scopes,
         "registeredEvidenceGate": validation_gate,
-        "fairModelComparison": _fair_model_comparison(
-            validation_gate=validation_gate,
-            metric=metric,
+        "fairModelComparison": (
+            _fair_model_comparison(validation_gate=validation_gate, metric=metric)
+            if needs_validation
+            else {
+                "validationStatus": "not_loaded",
+                "comparisonType": "open_method_validation",
+                "rows": [],
+            }
+        ),
+        "algorithmLeaderboard": (
+            _algorithm_leaderboard(validation_gate=validation_gate, metric=metric)
+            if needs_validation
+            else {
+                "validationStatus": "not_loaded",
+                "disclosure": "Open Algorithm Leaderboard to load governed Brand-level evidence.",
+                "rows": [],
+            }
         ),
         "allocationAccuracy": allocation_accuracy,
         "predictionIntervals": interval_summary,
@@ -428,6 +500,44 @@ def build_forecast_center(
     if include_all_records:
         payload["modelRecords"] = model_records
         payload["modelPlcRecords"] = plc_records
+    return payload
+
+
+def build_algorithm_leaderboard_payload(
+    *,
+    source_hash: str,
+    request_cutoff: str | None,
+    filters_applied: bool,
+    evaluation_scope_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Build registered leaderboard evidence without loading or fitting forecast data."""
+
+    payload = _empty_payload("revenue", "brand", "leaderboard", 3, 10)
+    gate = _registered_evidence_gate(
+        metric="revenue",
+        model_strategy="reference_portfolio",
+        source_hash=source_hash,
+        latest_complete_month=request_cutoff or "",
+        brand_records=[{"brand": brand} for brand in OFFICIAL_ANCHORS],
+        evaluation_scope_eligible=not filters_applied,
+        evaluation_scope_metadata=evaluation_scope_metadata,
+    )
+    payload["summary"]["registeredEvidenceGate"] = gate
+    payload["summary"]["algorithmLeaderboard"] = _algorithm_leaderboard(
+        validation_gate=gate,
+        metric="revenue",
+    )
+    payload["summary"]["latestCompleteMonth"] = request_cutoff
+    payload["summary"]["modelGovernance"].update(
+        {
+            "requestedStrategy": "reference_portfolio",
+            "sourceHash": source_hash or "unavailable",
+            "trainingCutoff": request_cutoff or "",
+            "backtestHorizons": [1, 2, 3],
+            "evaluationScopeId": gate["evaluationScopeId"],
+            "validationGate": gate,
+        }
+    )
     return payload
 
 
@@ -1422,10 +1532,18 @@ def _business_validation(
         },
         {
             "check": "Hierarchy reconciliation",
-            "status": str(reconciliation.get("status", "WARN")),
+            "status": (
+                "NOT_LOADED"
+                if reconciliation.get("status") == "NOT_LOADED"
+                else str(reconciliation.get("status", "WARN"))
+            ),
             "detail": (
-                f"Maximum parent/child delta is "
-                f"{max(float(reconciliation.get('brandToModelMaxAbsDelta', 0.0)), float(reconciliation.get('modelToPlcMaxAbsDelta', 0.0))):.6f}."
+                "Open a hierarchy surface to calculate parent/child reconciliation."
+                if reconciliation.get("status") == "NOT_LOADED"
+                else (
+                    f"Maximum parent/child delta is "
+                    f"{max(float(reconciliation.get('brandToModelMaxAbsDelta', 0.0)), float(reconciliation.get('modelToPlcMaxAbsDelta', 0.0))):.6f}."
+                )
             ),
         },
         {
@@ -1523,10 +1641,30 @@ def _business_validation(
             ["modelName", "brand"],
             dropna=False,
         ):
+            positive_activity_months = int(
+                group.loc[
+                    (
+                        pd.to_numeric(group.get("installationQuantity"), errors="coerce").fillna(0.0)
+                        > 0
+                    )
+                    | (
+                        pd.to_numeric(group.get("pioRevenue"), errors="coerce").fillna(0.0)
+                        > 0
+                    ),
+                    "month",
+                ]
+                .astype(str)
+                .str[:7]
+                .nunique()
+            )
             fallback_groups.append(
                 f"{model_name} -> {anchor_brand} "
-                f"({str(group['month'].min())[:7]} to {str(group['month'].max())[:7]}; "
-                "no exact dealer-wholesale model match)"
+                f"(sourceBrand={','.join(sorted(group['sourceBrand'].fillna('').astype(str).unique())) or 'unknown'}; "
+                f"anchorMappingMethod={','.join(sorted(group['anchorMappingMethod'].fillna('').astype(str).unique()))}; "
+                f"lifecycleStatus={','.join(sorted(group['lifecycleStatus'].fillna('Unknown').astype(str).unique()))}; "
+                f"positive activity months={positive_activity_months}; "
+                f"{str(group['month'].min())[:7]} to {str(group['month'].max())[:7]}; "
+                "exact dealer/non-fleet Wholesale model mapping is missing)"
             )
         fallback_detail = "; ".join(fallback_groups)
     checks.append(
@@ -2102,6 +2240,91 @@ def _fair_model_comparison(
         "cutoff": validation_gate["cutoff"],
         "foldCount": 51 if comparable else None,
         "aggregation": "Official Total on identical common H1/H2/H3 folds",
+        "rows": rows,
+    }
+
+
+def _algorithm_leaderboard(
+    *,
+    validation_gate: dict[str, Any],
+    metric: str,
+) -> dict[str, Any]:
+    disclosure = (
+        "PIO Revenue at Brand anchors and Official Total only. H1/H2/H3 use a 24-month "
+        "minimum training window and 18/17/16 = 51 common folds with 100% coverage. "
+        "Brand accuracy is not Model or PLC accuracy; use Allocation Accuracy for separate "
+        "allocation-only child diagnostics."
+    )
+    if metric != "revenue" or not validation_gate["eligible"]:
+        return {
+            "evaluationScopeId": validation_gate["evaluationScopeId"],
+            "validationStatus": "unvalidated_not_same_contract",
+            "sourceHash": validation_gate["sourceHash"],
+            "cutoff": validation_gate["cutoff"],
+            "target": "PIO Revenue",
+            "grain": "Brand anchors + Official Total",
+            "horizons": [1, 2, 3],
+            "minimumTrainingMonths": 24,
+            "expectedFoldCounts": {"1": 18, "2": 17, "3": 16, "combined": 51},
+            "foldCount": 0,
+            "coverage": 0.0,
+            "aggregation": "sum HMA/GMA/KUS on each common fold before WAPE",
+            "disclosure": disclosure,
+            "rows": [],
+        }
+
+    rows = [
+        {
+            "modelId": "rebuilt_reference_portfolio_v1",
+            "label": "Validated reference portfolio",
+            "hmaWape": VALIDATED_REFERENCE_PORTFOLIO["brandMetrics"]["HMA"]["wape"],
+            "gmaWape": VALIDATED_REFERENCE_PORTFOLIO["brandMetrics"]["GMA"]["wape"],
+            "kusWape": VALIDATED_REFERENCE_PORTFOLIO["brandMetrics"]["KUS"]["wape"],
+            "officialTotalWape": VALIDATED_REFERENCE_PORTFOLIO["officialTotal"]["wape"],
+            "accuracy": VALIDATED_REFERENCE_PORTFOLIO["officialTotal"]["accuracy"],
+            "foldCount": VALIDATED_REFERENCE_PORTFOLIO["foldCount"],
+            "coverage": VALIDATED_REFERENCE_PORTFOLIO["evaluationEvidence"]["predictionCoverage"],
+            "status": "validated_champion",
+        }
+    ]
+    for model_id in ("tree_meta_selector_v1", "elastic_net_anchor_residual_v1"):
+        artifact = load_ml_challenger_artifact(
+            model_id,
+            source_hash=validation_gate["sourceHash"],
+        )
+        evaluation = artifact["evaluation"]
+        official_metrics = evaluation["officialTotalMetrics"]
+        rows.append(
+            {
+                "modelId": model_id,
+                "label": artifact["displayName"],
+                "hmaWape": evaluation["entityMetrics"]["HMA"]["combined"]["wape"],
+                "gmaWape": evaluation["entityMetrics"]["GMA"]["combined"]["wape"],
+                "kusWape": evaluation["entityMetrics"]["KUS"]["combined"]["wape"],
+                "officialTotalWape": official_metrics["wape"],
+                "accuracy": official_metrics["accuracy"],
+                "foldCount": official_metrics["foldCount"],
+                "coverage": official_metrics["predictionCoverage"],
+                "status": "challenger_not_promoted",
+            }
+        )
+    rows.sort(key=lambda row: float(row["officialTotalWape"]))
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return {
+        "evaluationScopeId": validation_gate["evaluationScopeId"],
+        "validationStatus": "validated_same_contract_leaderboard",
+        "sourceHash": validation_gate["sourceHash"],
+        "cutoff": validation_gate["cutoff"],
+        "target": "PIO Revenue",
+        "grain": "Brand anchors + Official Total",
+        "horizons": [1, 2, 3],
+        "minimumTrainingMonths": 24,
+        "expectedFoldCounts": {"1": 18, "2": 17, "3": 16, "combined": 51},
+        "foldCount": 51,
+        "coverage": 1.0,
+        "aggregation": "sum HMA/GMA/KUS on each common fold before WAPE",
+        "disclosure": disclosure,
         "rows": rows,
     }
 
@@ -3454,13 +3677,20 @@ def _mode_text(values: pd.Series) -> str:
     return cleaned.mode().iloc[0] if not cleaned.empty else "Unknown"
 
 
-def _empty_payload(metric: str, level: str, horizon: int, top_n: int) -> dict[str, Any]:
+def _empty_payload(
+    metric: str,
+    level: str,
+    surface: str,
+    horizon: int,
+    top_n: int,
+) -> dict[str, Any]:
     return {
         "summary": {
             "metric": metric,
             "metricLabel": METRIC_LABELS.get(metric, metric),
             "unit": "USD" if metric == "revenue" else "units",
             "level": level,
+            "loadedSurface": surface,
             "seriesCount": 0,
             "allModelSeriesCount": 0,
             "allModelPlcSeriesCount": 0,
@@ -3500,7 +3730,7 @@ def _empty_payload(metric: str, level: str, horizon: int, top_n: int) -> dict[st
             },
             "businessValidation": [],
             "reconciliation": {
-                "status": "PASS",
+                "status": "NOT_LOADED",
                 "brandToModelMaxAbsDelta": 0.0,
                 "modelToPlcMaxAbsDelta": 0.0,
                 "tolerance": 0.01,
@@ -3519,6 +3749,11 @@ def _empty_payload(metric: str, level: str, horizon: int, top_n: int) -> dict[st
             "fairModelComparison": {
                 "validationStatus": "unvalidated_not_same_contract",
                 "comparisonType": "isolated_hma_ets_comparison",
+                "rows": [],
+            },
+            "algorithmLeaderboard": {
+                "validationStatus": "not_loaded",
+                "disclosure": "Open Algorithm Leaderboard to load governed Brand-level evidence.",
                 "rows": [],
             },
             "allocationAccuracy": [],

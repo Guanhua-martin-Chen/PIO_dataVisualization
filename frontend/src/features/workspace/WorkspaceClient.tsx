@@ -33,19 +33,14 @@ import {
 } from "antd";
 import type { TableColumnsType, TablePaginationConfig } from "antd";
 import type { FilterValue, SorterResult } from "antd/es/table/interface";
-import ReactECharts from "echarts-for-react";
 import { useEffect, useRef, useState, use } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
 import dayjs from "dayjs";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import WorkspaceHeader from "./components/WorkspaceHeader";
-import ForecastCenterPanel from "./components/ForecastCenterPanel";
-import ExceptionsPanel from "./components/ExceptionsPanel";
-import ForecastWorkspace from "./components/ForecastWorkspace";
-import InventoryPlanningPanel from "./components/InventoryPlanningPanel";
-import OutputCenterPanel from "./components/OutputCenterPanel";
 import { WorkspaceError, WorkspaceLoading } from "./components/WorkspaceState";
 import {
   AnalystPayload,
@@ -75,10 +70,19 @@ import {
   buildWorkspaceParams,
 } from "../../app/shared";
 
+const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
+const AlgorithmLeaderboardPanel = dynamic(() => import("./components/AlgorithmLeaderboardPanel"));
+const ForecastCenterPanel = dynamic(() => import("./components/ForecastCenterPanel"));
+const ExceptionsPanel = dynamic(() => import("./components/ExceptionsPanel"));
+const ForecastWorkspace = dynamic(() => import("./components/ForecastWorkspace"));
+const InventoryPlanningPanel = dynamic(() => import("./components/InventoryPlanningPanel"));
+const OutputCenterPanel = dynamic(() => import("./components/OutputCenterPanel"));
+
 const { RangePicker } = DatePicker;
 const { Title, Paragraph, Text } = Typography;
 const LEGACY_FORECAST_UI_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_LEGACY_FORECAST_UI === "true";
+const FORECAST_RESULT_LIMIT = 24;
 const REVENUE_ONLY_MODEL_STRATEGIES = new Set([
   "reference_portfolio",
   "tree_meta_selector_v1",
@@ -95,6 +99,16 @@ type InventorySource = {
 };
 
 type EdaSection = "initial" | "relationship" | "entities" | "lifecycle" | "data-quality";
+type ForecastSurface =
+  | "brand"
+  | "model"
+  | "plc"
+  | "model_plc"
+  | "exceptions"
+  | "validation"
+  | "intervals"
+  | "allocation_accuracy"
+  | "leaderboard";
 type EdaDetails = {
   relationship?: EdaRelationshipPayload;
   entities?: EdaEntitiesPayload;
@@ -193,11 +207,14 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const [forecastSubTab, setForecastSubTab] = useState("forecast");
   const [hierarchicalForecast] = useState<HierarchicalForecastPayload | null>(null);
   const [forecastCenterData, setForecastCenterData] = useState<ForecastCenterPayload | null>(null);
+  const [forecastExceptionData, setForecastExceptionData] = useState<ForecastCenterPayload | null>(null);
+  const [forecastLoadingByIdentity, setForecastLoadingByIdentity] = useState<Record<string, boolean>>({});
+  const [activeForecastIdentity, setActiveForecastIdentity] = useState("");
+  const [activeExceptionIdentity, setActiveExceptionIdentity] = useState("");
   const [inventoryPlanningData, setInventoryPlanningData] = useState<ForecastCenterPayload | null>(null);
   const [inventoryPlanningLoading, setInventoryPlanningLoading] = useState(false);
   const [forecastOutputRun, setForecastOutputRun] = useState<ForecastOutputRunPreview | null>(null);
   const [forecastOutputRunLoading, setForecastOutputRunLoading] = useState(false);
-  const [hierarchicalForecastLoading, setHierarchicalForecastLoading] = useState(false);
   const [forecastMetric, setForecastMetric] = useState<"revenue" | "quantity" | "wholesale_quantity">("revenue");
   const [hierarchyLevel, setHierarchyLevel] = useState<"brand" | "model" | "plc" | "model_plc">("brand");
   const [hierarchyModelStrategy, setHierarchyModelStrategy] = useState("auto");
@@ -234,9 +251,16 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   const edaIdentity = useRef("");
   const sourceAnchorAuditRequest = useRef<AbortController | null>(null);
   const legacyForecastRequest = useRef<AbortController | null>(null);
-  const forecastCenterRequest = useRef<AbortController | null>(null);
+  const forecastCenterRequests = useRef<Record<string, AbortController>>({});
+  const forecastCenterRequestIds = useRef<Record<string, number>>({});
+  const forecastCenterRequestSequence = useRef(0);
+  const forecastCenterResults = useRef<Record<string, ForecastCenterPayload>>({});
+  const activeForecastIdentityRef = useRef("");
+  const activeExceptionIdentityRef = useRef("");
   const inventoryPlanningRequest = useRef<AbortController | null>(null);
   const anomalyRequest = useRef<AbortController | null>(null);
+  const hierarchicalForecastLoading = Boolean(forecastLoadingByIdentity[activeForecastIdentity]);
+  const forecastExceptionLoading = Boolean(forecastLoadingByIdentity[activeExceptionIdentity]);
   const pivotFilterKey = JSON.stringify({
     search: tableState.search,
     brand: tableState.brand,
@@ -331,7 +355,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     Object.values(edaRequests.current).forEach((controller) => controller?.abort());
     sourceAnchorAuditRequest.current?.abort();
     legacyForecastRequest.current?.abort();
-    forecastCenterRequest.current?.abort();
+    Object.values(forecastCenterRequests.current).forEach((controller) => controller.abort());
     inventoryPlanningRequest.current?.abort();
     anomalyRequest.current?.abort();
   }, []);
@@ -697,6 +721,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     metric = forecastMetric,
     horizon = forecastHorizon,
     modelStrategy = hierarchyModelStrategy,
+    surface: ForecastSurface = level,
   ) {
     const governedForecastSheet = resolveForecastSheetName(sheetName);
     const hierarchyState = {
@@ -708,6 +733,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     };
     const params = buildWorkspaceParams(hierarchyState);
     params.set("level", level);
+    params.set("surface", surface);
     params.set("metric", metric);
     params.set("horizon", String(horizon));
     params.set("use_working_days", String(useWorkingDays));
@@ -716,11 +742,28 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     params.set("model_strategy", modelStrategy);
     params.set("min_monthly_volume", String(minimumMonthlyVolume));
     params.set("top_n", "10");
-    forecastCenterRequest.current?.abort();
+    const identity = `${governedForecastSheet}?${params.toString()}`;
+    const isExceptionSurface = surface === "exceptions";
+    if (isExceptionSurface) {
+      activeExceptionIdentityRef.current = identity;
+      setActiveExceptionIdentity(identity);
+    } else {
+      activeForecastIdentityRef.current = identity;
+      setActiveForecastIdentity(identity);
+    }
+    const cached = forecastCenterResults.current[identity];
+    if (cached) {
+      if (isExceptionSurface) setForecastExceptionData(cached);
+      else setForecastCenterData(cached);
+      return;
+    }
+    if (forecastCenterRequests.current[identity]) return;
+
     const controller = new AbortController();
-    forecastCenterRequest.current = controller;
-    setForecastCenterData(null);
-    setHierarchicalForecastLoading(true);
+    const requestId = ++forecastCenterRequestSequence.current;
+    forecastCenterRequests.current[identity] = controller;
+    forecastCenterRequestIds.current[identity] = requestId;
+    setForecastLoadingByIdentity((current) => ({ ...current, [identity]: true }));
     try {
       const response = await fetch(
         `${API_BASE_URL}/api/workbooks/${id}/sheets/${encodeURIComponent(governedForecastSheet)}/forecast-center?${params.toString()}`,
@@ -730,15 +773,29 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         throw new Error((await response.json()).detail ?? "Failed to run hierarchical forecast.");
       }
       const payload = (await response.json()) as ForecastCenterPayload;
-      if (controller.signal.aborted) return;
-      setForecastCenterData(payload);
+      if (controller.signal.aborted || forecastCenterRequestIds.current[identity] !== requestId) return;
+      forecastCenterResults.current[identity] = payload;
+      const cachedIdentities = Object.keys(forecastCenterResults.current);
+      if (cachedIdentities.length > FORECAST_RESULT_LIMIT) {
+        delete forecastCenterResults.current[cachedIdentities[0]];
+      }
+      if (isExceptionSurface && activeExceptionIdentityRef.current === identity) {
+        setForecastExceptionData(payload);
+      } else if (!isExceptionSurface && activeForecastIdentityRef.current === identity) {
+        setForecastCenterData(payload);
+      }
     } catch (err) {
       if (isAbortError(err)) return;
       messageApi.error(err instanceof Error ? err.message : "Failed to run hierarchical forecast.");
     } finally {
-      if (forecastCenterRequest.current === controller) {
-        forecastCenterRequest.current = null;
-        setHierarchicalForecastLoading(false);
+      if (forecastCenterRequestIds.current[identity] === requestId) {
+        delete forecastCenterRequests.current[identity];
+        delete forecastCenterRequestIds.current[identity];
+        setForecastLoadingByIdentity((current) => {
+          const next = { ...current };
+          delete next[identity];
+          return next;
+        });
       }
     }
   }
@@ -1030,6 +1087,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function syncForecastFromTable() {
     if (!workspace) return;
+    cancelForecastSurfaceRequests();
     const governedForecastSheet = resolveForecastSheetName(workspace.sheetName);
     if (forecastView === "hierarchy" || forecastView === "output") {
       const compatibleState = {
@@ -1063,6 +1121,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function applyForecastFilters(updates: Partial<TableState>) {
     if (!workspace) return;
+    cancelForecastSurfaceRequests();
     const nextState = {
       ...forecastFilterState,
       ...updates,
@@ -1086,6 +1145,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function resetForecastFilters() {
     if (!workspace) return;
+    cancelForecastSurfaceRequests();
     const cleared = { ...defaultTableState, pageSize: forecastFilterState.pageSize || tableState.pageSize };
     setForecastFilterState(cleared);
     setForecastPart("");
@@ -1143,15 +1203,25 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
   function loadForecastSurface(key: string) {
     if (!workspace) return;
     if (!LEGACY_FORECAST_UI_ENABLED) {
-      if (key === "forecast" || key === "exceptions") {
-        if (!forecastCenterData && !forecastCenterRequest.current) {
-          loadHierarchicalForecast(
-            resolveForecastSheetName(workspace.sheetName),
-            forecastFilterState,
-            hierarchyLevel,
-            forecastMetric,
-          );
-        }
+      if (key === "forecast") {
+        loadHierarchicalForecast(
+          resolveForecastSheetName(workspace.sheetName),
+          forecastFilterState,
+          hierarchyLevel,
+          forecastMetric,
+        );
+        return;
+      }
+      if (key === "exceptions") {
+        loadHierarchicalForecast(
+          resolveForecastSheetName(workspace.sheetName),
+          forecastFilterState,
+          hierarchyLevel,
+          forecastMetric,
+          forecastHorizon,
+          hierarchyModelStrategy,
+          "exceptions",
+        );
         return;
       }
       if (key === "inventory") {
@@ -1164,6 +1234,18 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         }
         return;
       }
+      if (key === "leaderboard") {
+        loadHierarchicalForecast(
+          resolveForecastSheetName(workspace.sheetName),
+          defaultTableState,
+          "brand",
+          "revenue",
+          3,
+          "reference_portfolio",
+          "leaderboard",
+        );
+        return;
+      }
       if (key === "output") return;
     }
     if (key === "anomaly") {
@@ -1174,14 +1256,12 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     }
     if (key === "forecast") {
       if (forecastView === "hierarchy") {
-        if (!forecastCenterRequest.current) {
-          loadHierarchicalForecast(
-            resolveForecastSheetName(workspace.sheetName),
-            forecastFilterState,
-            hierarchyLevel,
-            forecastMetric,
-          );
-        }
+        loadHierarchicalForecast(
+          resolveForecastSheetName(workspace.sheetName),
+          forecastFilterState,
+          hierarchyLevel,
+          forecastMetric,
+        );
       } else if (!legacyForecastRequest.current) {
         loadForecastData(
           resolveForecastSheetName(workspace.sheetName),
@@ -1204,19 +1284,27 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function cancelForecastSurfaceRequests() {
     const legacyController = legacyForecastRequest.current;
-    const forecastCenterController = forecastCenterRequest.current;
+    const forecastCenterControllers = Object.values(forecastCenterRequests.current);
     const inventoryController = inventoryPlanningRequest.current;
     const anomalyController = anomalyRequest.current;
     legacyForecastRequest.current = null;
-    forecastCenterRequest.current = null;
+    forecastCenterRequests.current = {};
+    forecastCenterRequestIds.current = {};
+    forecastCenterResults.current = {};
+    activeForecastIdentityRef.current = "";
+    activeExceptionIdentityRef.current = "";
     inventoryPlanningRequest.current = null;
     anomalyRequest.current = null;
     legacyController?.abort();
-    forecastCenterController?.abort();
+    forecastCenterControllers.forEach((controller) => controller.abort());
     inventoryController?.abort();
     anomalyController?.abort();
     setForecastLoading(false);
-    setHierarchicalForecastLoading(false);
+    setForecastLoadingByIdentity({});
+    setActiveForecastIdentity("");
+    setActiveExceptionIdentity("");
+    setForecastCenterData(null);
+    setForecastExceptionData(null);
     setInventoryPlanningLoading(false);
     setAnomalyLoading(false);
   }
@@ -1232,7 +1320,6 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       loadForecastSurface(forecastSubTab);
       return;
     }
-    cancelForecastSurfaceRequests();
     if (key === "agent" && workspace) {
       loadAnalystMemories(workspace.sheetName);
     }
@@ -1511,6 +1598,15 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
           hierarchyLevel,
           forecastMetric,
         )}
+        onSurfaceChange={(surface) => workspace && loadHierarchicalForecast(
+          workspace.sheetName,
+          forecastFilterState,
+          hierarchyLevel,
+          forecastMetric,
+          forecastHorizon,
+          hierarchyModelStrategy,
+          surface,
+        )}
         onExportCsv={exportForecastCenterCsv}
         currentExportReady={Boolean(validForecastOutputRun)}
       />
@@ -1595,13 +1691,16 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               ),
               children: (
                 <ExceptionsPanel
-                  data={forecastCenterData}
-                  loading={hierarchicalForecastLoading}
+                  data={forecastExceptionData}
+                  loading={forecastExceptionLoading}
                   onRefresh={() => loadHierarchicalForecast(
                     resolveForecastSheetName(workspace.sheetName),
                     forecastFilterState,
                     hierarchyLevel,
                     forecastMetric,
+                    forecastHorizon,
+                    hierarchyModelStrategy,
+                    "exceptions",
                   )}
                 />
               ),
@@ -1623,6 +1722,21 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     forecastFilterState,
                     forecastHorizon,
                   )}
+                />
+              ),
+            },
+            {
+              key: "leaderboard",
+              label: (
+                <span className="workspace-subtab-label">
+                  <strong>Algorithm Leaderboard</strong>
+                  <small>Brand-level evidence</small>
+                </span>
+              ),
+              children: (
+                <AlgorithmLeaderboardPanel
+                  data={forecastCenterData?.summary.loadedSurface === "leaderboard" ? forecastCenterData : null}
+                  loading={hierarchicalForecastLoading}
                 />
               ),
             },

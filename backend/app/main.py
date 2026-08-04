@@ -5,11 +5,12 @@ import hashlib
 import os
 import pickle
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from uuid import uuid4
@@ -45,7 +46,11 @@ from pio_platform.fact_table import (
 )
 from pio_platform.model_entities import build_model_entity_map, build_model_lifecycle
 from pio_platform.hierarchical_forecasting import build_hierarchical_forecast
-from pio_platform.forecast_center import build_forecast_center, build_part_planning_records
+from pio_platform.forecast_center import (
+    build_algorithm_leaderboard_payload,
+    build_forecast_center,
+    build_part_planning_records,
+)
 from pio_platform.output_center import (
     build_current_view_csv,
     create_or_get_output_run,
@@ -96,6 +101,13 @@ MAX_WORKBOOKS = 20
 OUTPUTS_DIR = Path("outputs")
 OUTPUTS_DIR.mkdir(exist_ok=True)
 INDEX_FILE = OUTPUTS_DIR / "index.json"
+PREPARED_SOURCE_DIR = OUTPUTS_DIR / "prepared_sources"
+PREPARED_SOURCE_DIR.mkdir(exist_ok=True)
+PREPARED_SOURCE_CONTRACT_VERSION = "pio-prepared-source-v1"
+FORECAST_RESULT_DIR = OUTPUTS_DIR / "forecast_results"
+FORECAST_RESULT_DIR.mkdir(exist_ok=True)
+FORECAST_RESULT_CONTRACT_VERSION = "pio-forecast-result-v1"
+FORECAST_RESULT_MEMORY_LIMIT = 16
 
 
 # ── Session store ─────────────────────────────────────────────────────────────
@@ -105,8 +117,11 @@ class WorkbookSession:
     filename: str
     file_bytes: bytes
     sheet_names: list[str]
+    source_hash: str = ""
     bundles: dict[str, DatasetBundle] = field(default_factory=dict)
-    monthly_facts: dict[str, pd.DataFrame] = field(default_factory=dict)
+    prepared_sources: dict[str, pd.DataFrame] = field(default_factory=dict)
+    prepared_source_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    forecast_prewarm_started: bool = False
     column_profiles: dict[str, pd.DataFrame] = field(default_factory=dict)
     workspace_static: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -114,6 +129,18 @@ class WorkbookSession:
 WORKBOOKS: dict[str, WorkbookSession] = {}
 # Values: "processing" | "ready" | "error"
 WORKBOOK_STATUS: dict[str, str] = {}
+
+
+@dataclass
+class _InFlightForecastResult:
+    event: threading.Event
+    value: dict[str, Any] | None = None
+    error: BaseException | None = None
+
+
+FORECAST_RESULT_MEMORY: OrderedDict[str, dict[str, Any]] = OrderedDict()
+FORECAST_RESULT_INFLIGHT: dict[str, _InFlightForecastResult] = {}
+FORECAST_RESULT_LOCK = threading.RLock()
 
 
 class AnalystRequest(BaseModel):
@@ -192,6 +219,152 @@ def _workbook_sha256(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 
 
+def _session_source_hash(session: WorkbookSession) -> str:
+    if not session.source_hash:
+        session.source_hash = _workbook_sha256(session.file_bytes)
+    return session.source_hash
+
+
+def _prepared_source_cache_path(
+    source_hash: str,
+    sales_sheet: str,
+    role: str,
+) -> Path:
+    safe_sheet = "".join(c for c in sales_sheet if c.isalnum() or c in ("-", "_"))
+    return PREPARED_SOURCE_DIR / (
+        f"{source_hash}_{PREPARED_SOURCE_CONTRACT_VERSION}_{safe_sheet}_{role}.pkl"
+    )
+
+
+def _get_prepared_source(
+    session: WorkbookSession,
+    sales_sheet: str,
+    role: str,
+    builder: Callable[[], pd.DataFrame],
+) -> pd.DataFrame:
+    """Return one exact-source prepared frame from memory, disk, or one locked build."""
+    source_hash = _session_source_hash(session)
+    cache_key = f"{source_hash}:{PREPARED_SOURCE_CONTRACT_VERSION}:{sales_sheet}:{role}"
+    with session.prepared_source_lock:
+        if cache_key in session.prepared_sources:
+            return session.prepared_sources[cache_key]
+
+        cache_path = _prepared_source_cache_path(source_hash, sales_sheet, role)
+        if cache_path.exists():
+            try:
+                with cache_path.open("rb") as cache_file:
+                    payload = pickle.load(cache_file)
+                if (
+                    payload.get("sourceHash") == source_hash
+                    and payload.get("contractVersion") == PREPARED_SOURCE_CONTRACT_VERSION
+                    and payload.get("salesSheet") == sales_sheet
+                    and payload.get("role") == role
+                    and isinstance(payload.get("frame"), pd.DataFrame)
+                ):
+                    session.prepared_sources[cache_key] = payload["frame"]
+                    return payload["frame"]
+            except Exception:
+                pass
+
+        frame = builder()
+        session.prepared_sources[cache_key] = frame
+        try:
+            with cache_path.open("wb") as cache_file:
+                pickle.dump(
+                    {
+                        "sourceHash": source_hash,
+                        "contractVersion": PREPARED_SOURCE_CONTRACT_VERSION,
+                        "salesSheet": sales_sheet,
+                        "role": role,
+                        "frame": frame,
+                    },
+                    cache_file,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+        except Exception:
+            pass
+        return frame
+
+
+def _forecast_result_key(identity: dict[str, Any]) -> str:
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _forecast_result_cache_path(result_key: str) -> Path:
+    return FORECAST_RESULT_DIR / f"{result_key}.pkl"
+
+
+def _remember_forecast_result(result_key: str, value: dict[str, Any]) -> None:
+    FORECAST_RESULT_MEMORY[result_key] = value
+    FORECAST_RESULT_MEMORY.move_to_end(result_key)
+    while len(FORECAST_RESULT_MEMORY) > FORECAST_RESULT_MEMORY_LIMIT:
+        FORECAST_RESULT_MEMORY.popitem(last=False)
+
+
+def _get_or_build_forecast_result(
+    identity: dict[str, Any],
+    builder: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Reuse one exact Forecast identity from memory, disk, or one in-flight build."""
+    result_key = _forecast_result_key(identity)
+    cache_path = _forecast_result_cache_path(result_key)
+    with FORECAST_RESULT_LOCK:
+        cached = FORECAST_RESULT_MEMORY.get(result_key)
+        if cached is not None:
+            FORECAST_RESULT_MEMORY.move_to_end(result_key)
+            return cached
+        if cache_path.exists():
+            try:
+                with cache_path.open("rb") as cache_file:
+                    payload = pickle.load(cache_file)
+                if payload.get("identity") == identity and isinstance(payload.get("result"), dict):
+                    _remember_forecast_result(result_key, payload["result"])
+                    return payload["result"]
+            except Exception:
+                pass
+        in_flight = FORECAST_RESULT_INFLIGHT.get(result_key)
+        owner = in_flight is None
+        if owner:
+            in_flight = _InFlightForecastResult(event=threading.Event())
+            FORECAST_RESULT_INFLIGHT[result_key] = in_flight
+
+    assert in_flight is not None
+    if not owner:
+        in_flight.event.wait()
+        if in_flight.error is not None:
+            raise in_flight.error
+        if in_flight.value is None:
+            raise RuntimeError("Forecast result completed without a value.")
+        return in_flight.value
+
+    try:
+        result = builder()
+    except BaseException as exc:
+        with FORECAST_RESULT_LOCK:
+            in_flight.error = exc
+            FORECAST_RESULT_INFLIGHT.pop(result_key, None)
+            in_flight.event.set()
+        raise
+
+    try:
+        with cache_path.open("wb") as cache_file:
+            pickle.dump(
+                {"identity": identity, "result": result},
+                cache_file,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+    except OSError:
+        pass
+
+    with FORECAST_RESULT_LOCK:
+        _remember_forecast_result(result_key, result)
+        in_flight.value = result
+        FORECAST_RESULT_INFLIGHT.pop(result_key, None)
+        in_flight.event.set()
+    return result
+
+
 def _stored_entry_hash(entry: dict[str, Any]) -> str | None:
     stored_hash = str(entry.get("fileHash", "")).strip().lower()
     if stored_hash:
@@ -245,8 +418,51 @@ def _process_workbook_background(workbook_id: str) -> None:
             return
         _get_bundle(session, session.sheet_names[0])
         WORKBOOK_STATUS[workbook_id] = "ready"
+        _start_forecast_prewarm(session)
     except Exception:
         WORKBOOK_STATUS[workbook_id] = "error"
+
+
+def _start_forecast_prewarm(session: WorkbookSession) -> None:
+    with session.prepared_source_lock:
+        if session.forecast_prewarm_started:
+            return
+        session.forecast_prewarm_started = True
+    threading.Thread(
+        target=_prewarm_default_forecast,
+        args=(session.workbook_id,),
+        daemon=True,
+    ).start()
+
+
+def _prewarm_default_forecast(workbook_id: str) -> None:
+    """Prepare governed sources, then cache the default Revenue/Brand/Auto result."""
+    session = WORKBOOKS.get(workbook_id)
+    if session is None:
+        return
+    try:
+        sales_sheet = _forecast_sales_sheet_name(session, session.sheet_names[0])
+        _get_forecast_center_result(
+            session,
+            sales_sheet,
+            metric="revenue",
+            level="brand",
+            surface="brand",
+            horizon=3,
+            use_working_days=True,
+            use_seasonality=True,
+            tariff_impact_pct=0.0,
+            model_strategy="auto",
+            min_monthly_volume=5.0,
+            top_n=10,
+            brand=[],
+            model=[],
+            part=[],
+            start_date="",
+            end_date="",
+        )
+    except Exception:
+        return
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
@@ -311,6 +527,7 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
         filename=file.filename,
         file_bytes=file_bytes,
         sheet_names=sheet_names,
+        source_hash=file_hash,
     )
     WORKBOOKS[workbook_id] = session
     WORKBOOK_STATUS[workbook_id] = "processing"
@@ -339,6 +556,7 @@ def get_workbook_status(workbook_id: str) -> dict[str, Any]:
     session = WORKBOOKS.get(workbook_id)
 
     if status == "ready" and session:
+        _start_forecast_prewarm(session)
         return {
             "status": "ready",
             "filename": session.filename,
@@ -368,6 +586,7 @@ def get_workbook_status(workbook_id: str) -> dict[str, Any]:
                 filename=entry["filename"],
                 file_bytes=file_bytes,
                 sheet_names=entry["sheetNames"],
+                source_hash=_workbook_sha256(file_bytes),
             )
             WORKBOOKS[workbook_id] = session
         
@@ -379,6 +598,7 @@ def get_workbook_status(workbook_id: str) -> dict[str, Any]:
                 pass
 
         WORKBOOK_STATUS[workbook_id] = "ready"
+        _start_forecast_prewarm(session)
         return {
             "status": "ready",
             "filename": entry["filename"],
@@ -394,6 +614,7 @@ def get_workbook_status(workbook_id: str) -> dict[str, Any]:
             filename=entry["filename"],
             file_bytes=file_bytes,
             sheet_names=entry["sheetNames"],
+            source_hash=_workbook_sha256(file_bytes),
         )
         WORKBOOKS[workbook_id] = session
 
@@ -611,7 +832,7 @@ def get_hierarchical_forecast(
             model_strategy=model_strategy,
             limit=limit,
             latest_month_is_complete=latest_month_is_complete,
-            source_hash=_workbook_sha256(session.file_bytes),
+            source_hash=_session_source_hash(session),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -623,6 +844,7 @@ def get_forecast_center(
     sheet_name: str,
     metric: str = Query(default="revenue"),
     level: str = Query(default="brand"),
+    surface: str = Query(default=""),
     horizon: int = Query(default=3, ge=1, le=12),
     use_working_days: bool = Query(default=True),
     use_seasonality: bool = Query(default=True),
@@ -637,8 +859,87 @@ def get_forecast_center(
     end_date: str = Query(default=""),
 ) -> dict[str, Any]:
     session = _get_session(workbook_id)
+    try:
+        return _get_forecast_center_result(
+            session,
+            sheet_name,
+            metric=metric,
+            level=level,
+            surface=surface or level,
+            horizon=horizon,
+            use_working_days=use_working_days,
+            use_seasonality=use_seasonality,
+            tariff_impact_pct=tariff_impact_pct,
+            model_strategy=model_strategy,
+            min_monthly_volume=min_monthly_volume,
+            top_n=top_n,
+            brand=brand,
+            model=model,
+            part=part,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _get_forecast_center_result(
+    session: WorkbookSession,
+    sheet_name: str,
+    *,
+    metric: str,
+    level: str,
+    surface: str,
+    horizon: int,
+    use_working_days: bool,
+    use_seasonality: bool,
+    tariff_impact_pct: float,
+    model_strategy: str,
+    min_monthly_volume: float,
+    top_n: int,
+    brand: list[str],
+    model: list[str],
+    part: list[str],
+    start_date: str,
+    end_date: str,
+) -> dict[str, Any]:
+    if surface == "leaderboard":
+        if metric != "revenue" or level != "brand":
+            raise ValueError("Algorithm Leaderboard is available only for Revenue at Brand level.")
+        source_hash = _session_source_hash(session)
+        request_cutoff = _cached_forecast_request_cutoff(session, sheet_name, end_date)
+        filters_applied = bool(brand or model or part or start_date or end_date)
+        evaluation_scope_metadata = {
+            "filtersApplied": filters_applied,
+            "brand": sorted(brand),
+            "model": sorted(model),
+            "part": sorted(part),
+            "startDate": start_date,
+            "endDate": end_date,
+            "requestCutoff": request_cutoff,
+            "target": metric,
+        }
+        identity = {
+            "contractVersion": FORECAST_RESULT_CONTRACT_VERSION,
+            "sourceHash": source_hash,
+            "cutoff": request_cutoff,
+            "surface": "leaderboard",
+            "filters": evaluation_scope_metadata,
+        }
+        return _get_or_build_forecast_result(
+            identity,
+            lambda: build_algorithm_leaderboard_payload(
+                source_hash=source_hash,
+                request_cutoff=request_cutoff,
+                filters_applied=filters_applied,
+                evaluation_scope_metadata=evaluation_scope_metadata,
+            ),
+        )
+
+    sales_sheet = _forecast_sales_sheet_name(session, sheet_name)
     facts = _get_monthly_fact_table(session, sheet_name).copy()
     wholesale_long = _all_wholesale_long(session, sheet_name)
+    working_days = _working_days_long(session, sheet_name)
     facts, wholesale_long = _filter_forecast_sources(
         facts,
         wholesale_long,
@@ -653,14 +954,58 @@ def get_forecast_center(
         sheet_name,
         end_date,
     )
-    try:
-        filters_applied = bool(brand or model or part or start_date or end_date)
-        return build_forecast_center(
+    filters_applied = bool(brand or model or part or start_date or end_date)
+    request_cutoff = (
+        str(
+            latest_sales_date.to_period("M")
+            if latest_month_is_complete
+            else latest_sales_date.to_period("M") - 1
+        )
+        if latest_sales_date is not None
+        else None
+    )
+    evaluation_scope_metadata = {
+        "filtersApplied": filters_applied,
+        "brand": sorted(brand),
+        "model": sorted(model),
+        "part": sorted(part),
+        "startDate": start_date,
+        "endDate": end_date,
+        "requestCutoff": request_cutoff,
+        "target": metric,
+    }
+    working_day_signature = hashlib.sha256(
+        working_days.to_json(orient="split", date_format="iso").encode("utf-8")
+    ).hexdigest()
+    identity = {
+        "contractVersion": FORECAST_RESULT_CONTRACT_VERSION,
+        "sourceHash": _session_source_hash(session),
+        "salesSheet": sales_sheet,
+        "cutoff": request_cutoff,
+        "metric": metric,
+        "strategy": model_strategy,
+        "surface": surface,
+        "level": level,
+        "filters": evaluation_scope_metadata,
+        "horizon": horizon,
+        "workingDays": working_day_signature,
+        "settings": {
+            "useWorkingDays": use_working_days,
+            "useSeasonality": use_seasonality,
+            "tariffImpactPct": tariff_impact_pct,
+            "minimumMonthlyVolume": min_monthly_volume,
+            "topN": top_n,
+        },
+    }
+    return _get_or_build_forecast_result(
+        identity,
+        lambda: build_forecast_center(
             facts,
-            _working_days_long(session, sheet_name),
+            working_days,
             wholesale_long,
             metric=metric,
             level=level,
+            surface=surface,
             horizon=horizon,
             use_working_days=use_working_days,
             use_seasonality=use_seasonality,
@@ -670,29 +1015,11 @@ def get_forecast_center(
             top_n=top_n,
             latest_sales_month_is_complete=latest_month_is_complete,
             latest_sales_date=latest_sales_date,
-            source_hash=_workbook_sha256(session.file_bytes),
+            source_hash=_session_source_hash(session),
             evaluation_scope_eligible=not filters_applied,
-            evaluation_scope_metadata={
-                "filtersApplied": filters_applied,
-                "brand": list(brand),
-                "model": list(model),
-                "part": list(part),
-                "startDate": start_date,
-                "endDate": end_date,
-                "requestCutoff": (
-                    str(
-                        latest_sales_date.to_period("M")
-                        if latest_month_is_complete
-                        else latest_sales_date.to_period("M") - 1
-                    )
-                    if latest_sales_date is not None
-                    else None
-                ),
-                "target": metric,
-            },
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+            evaluation_scope_metadata=evaluation_scope_metadata,
+        ),
+    )
 
 
 @app.post(
@@ -725,7 +1052,7 @@ def create_forecast_output_run(
             workbook_id=workbook_id,
             sheet_name=sheet_name,
             source_filename=session.filename,
-            source_hash=_workbook_sha256(session.file_bytes),
+            source_hash=_session_source_hash(session),
             facts=facts,
             working_days=_working_days_long(session, sheet_name),
             wholesale_long=wholesale_long,
@@ -896,7 +1223,7 @@ def export_forecast_center_csv(
         min_monthly_volume=min_monthly_volume,
         latest_sales_month_is_complete=latest_month_is_complete,
         latest_sales_date=latest_sales_date,
-        source_hash=_workbook_sha256(session.file_bytes),
+        source_hash=_session_source_hash(session),
         evaluation_scope_eligible=not bool(
             brand or model or part or start_date or end_date
         ),
@@ -997,7 +1324,7 @@ def export_forecast_center_xlsx(
         metric="revenue",
         level="brand",
         **common,
-        source_hash=_workbook_sha256(session.file_bytes),
+        source_hash=_session_source_hash(session),
     )
     non_revenue_common = dict(common)
     if model_strategy == "reference_portfolio" or model_strategy in ML_CHALLENGER_IDS:
@@ -1009,7 +1336,7 @@ def export_forecast_center_xlsx(
         metric="quantity",
         level="brand",
         **non_revenue_common,
-        source_hash=_workbook_sha256(session.file_bytes),
+        source_hash=_session_source_hash(session),
     )
     wholesale = build_forecast_center(
         facts,
@@ -1018,7 +1345,7 @@ def export_forecast_center_xlsx(
         metric="wholesale_quantity",
         level="brand",
         **non_revenue_common,
-        source_hash=_workbook_sha256(session.file_bytes),
+        source_hash=_session_source_hash(session),
     )
     part_quantity = build_part_planning_records(
         facts,
@@ -1434,6 +1761,7 @@ def _get_session(workbook_id: str) -> WorkbookSession:
         filename=entry["filename"],
         file_bytes=file_bytes,
         sheet_names=entry["sheetNames"],
+        source_hash=_workbook_sha256(file_bytes),
     )
     WORKBOOKS[workbook_id] = session
     return session
@@ -3510,6 +3838,18 @@ def _forecast_sales_sheet_name(session: WorkbookSession, requested_sheet: str) -
 
 def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFrame:
     sales_sheet = _forecast_sales_sheet_name(session, sales_sheet)
+    return _get_prepared_source(
+        session,
+        sales_sheet,
+        "wholesale_long",
+        lambda: _build_all_wholesale_long(session, sales_sheet),
+    )
+
+
+def _build_all_wholesale_long(
+    session: WorkbookSession,
+    sales_sheet: str,
+) -> pd.DataFrame:
     sales_bundle = _get_bundle(session, sales_sheet)
     date_col = sales_bundle.roles.get("date")
     latest_sales_year = None
@@ -3557,6 +3897,18 @@ def _all_wholesale_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFr
 
 def _working_days_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFrame:
     sales_sheet = _forecast_sales_sheet_name(session, sales_sheet)
+    return _get_prepared_source(
+        session,
+        sales_sheet,
+        "working_days_long",
+        lambda: _build_working_days_long(session, sales_sheet),
+    )
+
+
+def _build_working_days_long(
+    session: WorkbookSession,
+    sales_sheet: str,
+) -> pd.DataFrame:
     for candidate in session.sheet_names:
         if candidate == sales_sheet:
             continue
@@ -3572,8 +3924,19 @@ def _working_days_long(session: WorkbookSession, sales_sheet: str) -> pd.DataFra
 
 def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.DataFrame:
     sales_sheet = _forecast_sales_sheet_name(session, sheet_name)
-    if sales_sheet in session.monthly_facts:
-        return session.monthly_facts[sales_sheet]
+    return _get_prepared_source(
+        session,
+        sales_sheet,
+        "monthly_facts",
+        lambda: _build_prepared_monthly_facts(session, sales_sheet),
+    )
+
+
+def _build_prepared_monthly_facts(
+    session: WorkbookSession,
+    sales_sheet: str,
+) -> pd.DataFrame:
+    """Build governed monthly facts from the prepared Wholesale and calendar frames."""
     bundle = _get_bundle(session, sales_sheet)
     columns = _resolve_eda_sales_columns(bundle)
     date_series = _eda_date_series(bundle, bundle.dataframe, columns["date"])
@@ -3586,7 +3949,7 @@ def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.Dat
         model_code_col=columns["model_code"],
         cutoff_year=2024,
     )
-    facts = build_monthly_fact_table(
+    return build_monthly_fact_table(
         bundle.dataframe,
         date_series,
         brand_col=columns["brand"],
@@ -3604,8 +3967,6 @@ def _get_monthly_fact_table(session: WorkbookSession, sheet_name: str) -> pd.Dat
         start_year=2023,
         end_year=2026,
     )
-    session.monthly_facts[sales_sheet] = facts
-    return facts
 
 
 def _latest_sales_month_is_complete(session: WorkbookSession, sheet_name: str) -> bool:
@@ -3647,6 +4008,42 @@ def _forecast_cutoff_context(
         complete_month_end = requested_month.end_time.normalize()
         return True, complete_month_end
     return _latest_sales_month_is_complete(session, sheet_name), latest_sales_date
+
+
+def _cached_forecast_request_cutoff(
+    session: WorkbookSession,
+    sheet_name: str,
+    end_date: str = "",
+) -> str | None:
+    sales_sheet = next(
+        (
+            candidate
+            for candidate in session.sheet_names
+            if candidate.strip().lower() == "pio_sales_data"
+        ),
+        sheet_name if sheet_name in session.sheet_names else "",
+    )
+    bundle = session.bundles.get(sales_sheet)
+    if bundle is None:
+        return None
+    date_col = bundle.roles.get("date")
+    if not date_col or date_col not in bundle.date_candidates:
+        return None
+    values = bundle.date_candidates[date_col].dropna()
+    if values.empty:
+        return None
+    latest = pd.Timestamp(values.max())
+    if end_date:
+        try:
+            requested_month = pd.Timestamp(end_date).to_period("M")
+            if requested_month < latest.to_period("M"):
+                return str(requested_month)
+        except (TypeError, ValueError):
+            pass
+    latest_is_complete = bool(
+        latest.normalize() >= (latest + pd.offsets.MonthEnd(0)).normalize()
+    )
+    return str(latest.to_period("M") if latest_is_complete else latest.to_period("M") - 1)
 
 
 def _filter_fact_brand_values(
