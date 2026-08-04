@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Card, DatePicker, Select, Space, Typography } from "antd";
+import { Button, Card, DatePicker, Popover, Select, Space, Typography } from "antd";
 import dayjs from "dayjs";
 import type { ReactNode } from "react";
 
@@ -44,6 +44,28 @@ export default function ForecastWorkspace({
             </div>
             <Space wrap>
               <Button onClick={onSyncFilters}>Use compatible Data Table filters</Button>
+              <Popover
+                title="Forecast filter and validation details"
+                trigger="click"
+                content={(
+                  <div style={{ maxWidth: 440 }}>
+                    <Paragraph>
+                      Synchronization copies only official Brand (HMA/GMA/KUS), Model, and start/end dates.
+                      It clears search, model year, and part filters. Forecast always uses PIO_Sales_Data plus
+                      governed Wholesale history, regardless of the Data Table sheet.
+                    </Paragraph>
+                    <Paragraph style={{ marginBottom: 0 }}>
+                      Governed validation is expanding rolling origin at H1/H2/H3. application_recent_h1 is not
+                      part of the 51-fold ranking. Allocation-only diagnostics supply the held-out actual parent
+                      solely to isolate share error and are not end-to-end accuracy. Reconciliation is arithmetic
+                      only. Intervals use held-out residual calibration; child interval coverage remains unvalidated
+                      unless independently tested.
+                    </Paragraph>
+                  </div>
+                )}
+              >
+                <Button aria-label="Forecast filter and validation guide">Validation Guide</Button>
+              </Popover>
               <Button onClick={onResetFilters}>Reset Forecast filters</Button>
             </Space>
           </div>

@@ -9,10 +9,10 @@ import {
   Empty,
   Input,
   InputNumber,
+  Popover,
   Row,
   Select,
   Space,
-  Spin,
   Statistic,
   Table,
   Tag,
@@ -27,6 +27,7 @@ const { Paragraph } = Typography;
 
 export type ForecastMetric = "revenue" | "quantity" | "wholesale_quantity";
 export type ForecastLevel = "brand" | "model" | "plc" | "model_plc";
+export type ForecastSurface = ForecastLevel | "validation" | "intervals" | "allocation_accuracy" | "leaderboard";
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
   auto: "Auto model selection",
@@ -72,6 +73,7 @@ type ForecastCenterPanelProps = {
   onTariffImpactChange: (value: number) => void;
   onMinMonthlyVolumeChange: (value: number) => void;
   onRun: () => void;
+  onSurfaceChange: (surface: ForecastSurface) => void;
   onExportCsv: () => void;
   onExportXlsx?: () => void;
   currentExportReady?: boolean;
@@ -121,6 +123,12 @@ function forecastText(record: ForecastCenterRecord, metric: ForecastMetric) {
     .join(" | ");
 }
 
+function reconciliationStatus(status: "PASS" | "FAIL" | "NOT_LOADED") {
+  if (status === "PASS") return { label: "PASS", color: "green", valueColor: "#389e0d" };
+  if (status === "FAIL") return { label: "FAIL", color: "red", valueColor: "#cf1322" };
+  return { label: "Not Loaded", color: "blue", valueColor: "#1677ff" };
+}
+
 export default function ForecastCenterPanel({
   data,
   loading,
@@ -139,6 +147,7 @@ export default function ForecastCenterPanel({
   onTariffImpactChange,
   onMinMonthlyVolumeChange,
   onRun,
+  onSurfaceChange,
   onExportCsv,
   currentExportReady = true,
 }: ForecastCenterPanelProps) {
@@ -155,7 +164,7 @@ export default function ForecastCenterPanel({
   const hmaAnchor = data?.brandRecords.find((record) => record.brand === "HMA");
 
   return (
-    <Spin spinning={loading}>
+    <div>
       <div className="tab-stack forecast-center-panel">
         <Card
           className="content-card"
@@ -272,15 +281,36 @@ export default function ForecastCenterPanel({
           </Paragraph>
         </Card>
 
+        <Space wrap>
+          <Button
+            type={data && ["brand", "model", "plc", "model_plc"].includes(data.summary.loadedSurface) ? "primary" : "default"}
+            onClick={() => onSurfaceChange(level)}
+          >
+            Forecast results
+          </Button>
+          <Button type={data?.summary.loadedSurface === "validation" ? "primary" : "default"} onClick={() => onSurfaceChange("validation")}>
+            Method &amp; Validation
+          </Button>
+          <Button type={data?.summary.loadedSurface === "intervals" ? "primary" : "default"} onClick={() => onSurfaceChange("intervals")}>
+            Prediction Intervals
+          </Button>
+          <Button type={data?.summary.loadedSurface === "allocation_accuracy" ? "primary" : "default"} onClick={() => onSurfaceChange("allocation_accuracy")}>
+            Allocation Accuracy
+          </Button>
+        </Space>
+        {loading ? <Alert type="info" showIcon message="Loading the requested Forecast method in the background." /> : null}
+
         {data ? (
           <>
             <Row gutter={[18, 18]}>
               <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Backtest accuracy (all anchors)" value={data.summary.accuracyPct ?? "N/A"} suffix={data.summary.accuracyPct === null ? "" : "%"} /></Card></Col>
-              <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Weighted WAPE" value={data.summary.weightedWape === null ? "N/A" : (data.summary.weightedWape * 100).toFixed(1)} suffix={data.summary.weightedWape === null ? "" : "%"} /></Card></Col>
+              <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Weighted WAPE" value={data.summary.weightedWape === null ? "N/A" : (data.summary.weightedWape * 100).toFixed(2)} suffix={data.summary.weightedWape === null ? "" : "%"} /></Card></Col>
               <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Displayed series" value={data.summary.seriesCount} /></Card></Col>
-              <Col xs={12} md={6}><Card className="metric-card"><Statistic title="Hierarchy check" value={data.summary.reconciliation.status} /></Card></Col>
+              <Col xs={12} md={6}><Card className="metric-card"><Statistic title="reconciliation_checks" value={reconciliationStatus(data.summary.reconciliation.status).label} valueStyle={{ color: reconciliationStatus(data.summary.reconciliation.status).valueColor }} /></Card></Col>
             </Row>
 
+            {data.summary.loadedSurface === "validation" || data.summary.loadedSurface === "all" ? (
+              <>
             <Card className="content-card" title="Accuracy scope and interpretation">
               <div className="summary-stack">
                 <div className="summary-row"><span className="summary-dot" /><span><strong>Target:</strong> {data.summary.accuracyScope.target}</span></div>
@@ -429,14 +459,18 @@ export default function ForecastCenterPanel({
                 </div>
               </Card>
             </section>
+              </>
+            ) : null}
 
+            {data.summary.loadedSurface === "allocation_accuracy" || data.summary.loadedSurface === "all" ? (
             <section aria-label="Allocation accuracy">
               <Card className="content-card" title="Allocation accuracy">
                 <Paragraph className="workspace-copy">
                   Brand forecast error propagates to children; child share error is additional.
                   These held-out diagnostics supply the actual parent total only to isolate allocation
                   share error. They are allocationOnly, not end-to-end accuracy. Reconciliation PASS
-                  means the children sum to the parent; it does not measure allocation accuracy.
+                  means the children sum to the parent; it does not measure allocation accuracy. The scope
+                  covers every eligible child in the current request filters and is not limited by the Top 10 PLC display.
                 </Paragraph>
                 <div role="region" aria-label="Allocation accuracy table">
                   <Table
@@ -450,7 +484,7 @@ export default function ForecastCenterPanel({
                       { title: "Grain", dataIndex: "grain", key: "grain", width: 310 },
                       { title: "WAPE", dataIndex: "wape", key: "wape", align: "right" as const, render: (value: number | null) => value === null ? "N/A" : `${(value * 100).toFixed(2)}%` },
                       { title: "Accuracy", dataIndex: "accuracy", key: "accuracy", align: "right" as const, render: (value: number | null) => value === null ? "N/A" : `${(value * 100).toFixed(2)}%` },
-                      { title: "Coverage", dataIndex: "coverage", key: "coverage", align: "right" as const, render: (value: number) => `${(value * 100).toFixed(1)}%` },
+                      { title: "Eligible child signal coverage", dataIndex: "coverage", key: "coverage", align: "right" as const, render: (value: number) => `${(value * 100).toFixed(1)}%` },
                       { title: "Rows", dataIndex: "rowCount", key: "rowCount", align: "right" as const },
                       { title: "Folds", dataIndex: "foldCount", key: "foldCount", align: "right" as const },
                       { title: "Status", dataIndex: "validationStatus", key: "validationStatus" },
@@ -460,7 +494,9 @@ export default function ForecastCenterPanel({
                 </div>
               </Card>
             </section>
+            ) : null}
 
+            {data.summary.loadedSurface === "exceptions" || data.summary.loadedSurface === "all" ? (
             <section aria-label="Forecast Exceptions">
               <Card className="content-card" title="Forecast Exceptions">
                 <Paragraph className="workspace-copy">
@@ -490,7 +526,9 @@ export default function ForecastCenterPanel({
                 </div>
               </Card>
             </section>
+            ) : null}
 
+            {data.summary.loadedSurface === "intervals" || data.summary.loadedSurface === "all" ? (
             <section aria-label="Prediction intervals">
               <Card className="content-card" title="Prediction intervals">
                 <Paragraph className="workspace-copy">
@@ -521,7 +559,10 @@ export default function ForecastCenterPanel({
                 </div>
               </Card>
             </section>
+            ) : null}
 
+            {["brand", "model", "plc", "model_plc", "all"].includes(data.summary.loadedSurface) ? (
+              <>
             <Alert
               type={data.summary.nowcastMonths.length ? "warning" : "info"}
               showIcon
@@ -542,11 +583,42 @@ export default function ForecastCenterPanel({
                     dataIndex: "status",
                     key: "status",
                     width: 100,
-                    render: (value: "PASS" | "WARN" | "FAIL") => (
-                      <Tag color={value === "PASS" ? "green" : value === "WARN" ? "gold" : "red"}>{value}</Tag>
+                    render: (value: "PASS" | "WARN" | "FAIL" | "NOT_LOADED") => (
+                      <Tag color={value === "PASS" ? "green" : value === "WARN" ? "gold" : value === "NOT_LOADED" ? "blue" : "red"}>
+                        {value === "NOT_LOADED" ? "Not Loaded" : value}
+                      </Tag>
                     ),
                   },
-                  { title: "Evidence", dataIndex: "detail", key: "detail" },
+                  {
+                    title: "Evidence",
+                    dataIndex: "detail",
+                    key: "detail",
+                    render: (value: string, row) => row.check === "HMA/GMA model mapping" ? (
+                      <Popover
+                        trigger="click"
+                        title="HMA/GMA mapping audit"
+                        content={(
+                          <div style={{ maxWidth: 520, maxHeight: 360, overflow: "auto" }}>
+                            <Paragraph>{value}</Paragraph>
+                            <Paragraph>
+                              Exact dealer/non-fleet Wholesale model mapping is preferred. Fallback order is raw K
+                              to KUS, Genesis name prefix to GMA, then unmatched models to the HMA default. A source
+                              code existing does not prove an exact Wholesale model mapping.
+                            </Paragraph>
+                            <Paragraph style={{ marginBottom: 0 }}>
+                              Lifecycle is separate preprocessing: Discontinued is not a calculation failure.
+                              If Veloster appears, its source code H, positive activity months, and lifecycle status
+                              are recorded in this Evidence; WARN remains an audit disclosure.
+                            </Paragraph>
+                          </div>
+                        )}
+                      >
+                        <Button type="link" aria-label="Open HMA GMA mapping evidence details" style={{ padding: 0, height: "auto", whiteSpace: "normal", textAlign: "left" }}>
+                          View mapping evidence
+                        </Button>
+                      </Popover>
+                    ) : value,
+                  },
                 ]}
               />
               <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
@@ -603,7 +675,7 @@ export default function ForecastCenterPanel({
             <Card
               className="content-card"
               title="Reconciled forecast results"
-              extra={<Tag color={data.summary.reconciliation.status === "PASS" ? "green" : "red"}>{data.summary.reconciliation.status}</Tag>}
+              extra={<Tag color={reconciliationStatus(data.summary.reconciliation.status).color}>{reconciliationStatus(data.summary.reconciliation.status).label}</Tag>}
             >
               <Table
                 size="small"
@@ -677,11 +749,13 @@ export default function ForecastCenterPanel({
                 scroll={{ x: 1800 }}
               />
             </Card>
+              </>
+            ) : null}
           </>
         ) : (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Generate a Forecast Center result." />
         )}
       </div>
-    </Spin>
+    </div>
   );
 }

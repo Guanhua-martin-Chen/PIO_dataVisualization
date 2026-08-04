@@ -307,6 +307,17 @@ export type ForecastCenterPayload = {
     metricLabel: string;
     unit: "USD" | "units";
     level: "brand" | "model" | "plc" | "model_plc";
+    loadedSurface:
+      | "all"
+      | "brand"
+      | "model"
+      | "plc"
+      | "model_plc"
+      | "exceptions"
+      | "validation"
+      | "intervals"
+      | "allocation_accuracy"
+      | "leaderboard";
     seriesCount: number;
     allModelSeriesCount: number;
     allModelPlcSeriesCount: number;
@@ -346,11 +357,11 @@ export type ForecastCenterPayload = {
     };
     businessValidation: Array<{
       check: string;
-      status: "PASS" | "WARN" | "FAIL";
+      status: "PASS" | "WARN" | "FAIL" | "NOT_LOADED";
       detail: string;
     }>;
     reconciliation: {
-      status: "PASS" | "FAIL";
+      status: "PASS" | "FAIL" | "NOT_LOADED";
       brandToModelMaxAbsDelta: number;
       modelToPlcMaxAbsDelta: number;
       tolerance: number;
@@ -413,6 +424,34 @@ export type ForecastCenterPayload = {
         officialTotalWape: number;
         accuracy: number;
         foldCount: number;
+      }>;
+    };
+    algorithmLeaderboard: {
+      evaluationScopeId?: string;
+      validationStatus: string;
+      sourceHash?: string;
+      cutoff?: string;
+      target?: string;
+      grain?: string;
+      horizons?: number[];
+      minimumTrainingMonths?: number;
+      expectedFoldCounts?: Record<string, number>;
+      foldCount?: number;
+      coverage?: number;
+      aggregation?: string;
+      disclosure: string;
+      rows: Array<{
+        rank: number;
+        modelId: string;
+        label: string;
+        hmaWape: number;
+        gmaWape: number;
+        kusWape: number;
+        officialTotalWape: number;
+        accuracy: number;
+        foldCount: number;
+        coverage: number;
+        status: string;
       }>;
     };
     allocationAccuracy: Array<{
