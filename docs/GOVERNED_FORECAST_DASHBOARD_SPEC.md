@@ -114,21 +114,22 @@ For HMA, GMA, and KUS, show:
 KUS Fleet Carpet Floor Mat must appear as a separate component row or callout.
 Do not calculate regular PNVW from combined regular-plus-Fleet revenue.
 
-### 4.4 Model & PLC Movers / Watchlist
+### 4.4 Top Movers
 
-For each brand, show only the most material items by absolute dollar impact:
+Display the Forecast API's approved Brand + PLC movement ranking for each
+comparison:
 
-- two or three leading model movers;
-- two or three leading PLC movers;
-- change dollars;
-- MoM/YoY where valid;
-- contribution to the parent change;
-- `Strength`, `Watch`, or `Alert` classification.
+- upside and downside exactly in the order returned by `/top-movers`;
+- rank, Brand, PLC, forecast component, dollar change, and percentage context;
+- target and comparison months plus their explicit period types;
+- Kia Fleet as the separate `kia_fleet_cfm_adjustment` component.
 
-Materiality thresholds belong in configuration or the governed API contract,
-not hardcoded across React components. Large percentages on tiny bases must not
-dominate the ranking. Until thresholds are approved, show the API's
-`not_configured`/empty state honestly.
+The website must not recalculate, sort, or pad this ranking. Version 1.1.0 uses
+absolute revenue change for ranking, returns at most five real rows per
+direction, and applies no thresholds or classifications. Percentage change is
+context only and remains unavailable when comparison revenue is nonpositive.
+This is an adjacent forecast-month comparison, not a same-target revision,
+actual/nowcast change, alert, anomaly, or causal explanation.
 
 ### 4.5 PLC Planning
 
@@ -196,7 +197,7 @@ The current API contract is versioned under `/api/v1`.
 | `/plc-planning` | Brand + PLC and Brand + Model + PLC planning |
 | `/wholesale-drivers` | regular Wholesale plan/fallback disclosures |
 | `/model-performance` | methodology and model-governance evidence |
-| `/watchlist` | material movers after thresholds are governed |
+| `/top-movers` | API-ranked adjacent forecast-month Brand + PLC movements |
 | `/qa` | release, PLC, reconciliation, and Fleet checks |
 | `/downloads/sponsor-workbook` | exact Official workbook download |
 
@@ -233,7 +234,7 @@ reusable presentation components.
 
 Use `private_reference_templates/Executive_Summary.pptx` only as a local visual
 reference for information hierarchy, sponsor color cues, large KPI emphasis,
-and BLUF/watchlist structure.
+and BLUF/mover structure.
 
 Do not copy its dense small text, proprietary numbers, screenshots, or manual
 business conclusions. Translate the useful hierarchy into a cleaner web UI:
@@ -261,7 +262,7 @@ Every Official Forecast surface must handle:
 - upstream unavailable or timeout;
 - unsupported schema version;
 - stale run warning;
-- empty/`not_configured` endpoint;
+- empty/unavailable endpoint;
 - partial data/nowcast;
 - successful approved run.
 
@@ -301,7 +302,7 @@ The existing exploratory Data Workspace upload is not this release workflow.
    contract tests.
 3. One Executive Overview end-to-end slice using a real approved local API run.
 4. Revenue, quantity, brand, PLC, methodology/QA, and download surfaces.
-5. Movers/Watchlist rules after materiality thresholds are approved.
+5. API-ranked Top Movers with no website-side ranking or classification.
 6. Cross-system reconciliation, privacy/security review, responsive and
    accessibility QA, backend tests, and frontend production build.
 7. Only later: protected upload/run/QA/approval orchestration and deployment.

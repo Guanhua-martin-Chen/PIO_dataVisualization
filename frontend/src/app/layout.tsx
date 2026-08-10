@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PIO Demand Intelligence Platform",
-  description: "Excel-native workspace for automotive parts planning teams.",
+  description: "Governed PIO forecast overview and exploratory data workspace.",
 };
 
 const theme = {

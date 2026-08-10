@@ -37,7 +37,7 @@ export default function AlgorithmLeaderboardPanel({ data, loading }: AlgorithmLe
         message={leaderboard.validationStatus}
         description={leaderboard.disclosure}
       />
-      <Card className="content-card" title="PIO Revenue algorithm leaderboard">
+      <Card className="content-card" title="Experimental PIO Revenue algorithm leaderboard">
         <Paragraph className="workspace-copy">
           Scope: {scope}. Source hash: {leaderboard.sourceHash}; cutoff: {leaderboard.cutoff}.
           {leaderboard.aggregation ? ` ${leaderboard.aggregation}.` : ""}
@@ -47,14 +47,14 @@ export default function AlgorithmLeaderboardPanel({ data, loading }: AlgorithmLe
           pagination={false}
           rowKey="modelId"
           dataSource={leaderboard.rows}
-          locale={{ emptyText: "Registered metrics are withheld because this request is not the exact governed scope." }}
+          locale={{ emptyText: "Website metrics are withheld because this request is outside the registered experimental scope." }}
           columns={[
             { title: "Rank", dataIndex: "rank", key: "rank", width: 70 },
             { title: "Algorithm", dataIndex: "label", key: "label", width: 240 },
             { title: "HMA WAPE", dataIndex: "hmaWape", key: "hmaWape", render: percent },
             { title: "GMA WAPE", dataIndex: "gmaWape", key: "gmaWape", render: percent },
             { title: "KUS WAPE", dataIndex: "kusWape", key: "kusWape", render: percent },
-            { title: "Official Total WAPE", dataIndex: "officialTotalWape", key: "officialTotalWape", render: percent },
+            { title: "Website total WAPE", dataIndex: "officialTotalWape", key: "officialTotalWape", render: percent },
             { title: "Accuracy proxy", dataIndex: "accuracy", key: "accuracy", render: percent },
             { title: "Folds", dataIndex: "foldCount", key: "foldCount" },
             { title: "Coverage", dataIndex: "coverage", key: "coverage", render: percent },

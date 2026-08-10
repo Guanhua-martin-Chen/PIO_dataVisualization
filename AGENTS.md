@@ -21,13 +21,14 @@ Before modifying code, documentation, configuration, tests, or UI:
 1. Read this file completely.
 2. Read `README.md`.
 3. Read `docs/GOVERNED_FORECAST_DASHBOARD_SPEC.md` completely.
-4. Read `docs/INTEGRATION_STATUS.md` completely.
-5. Read the current Forecast API contract in the forecasting repository:
+4. Read `docs/DASHBOARD_IMPLEMENTATION_TIPS.md` completely.
+5. Read `docs/INTEGRATION_STATUS.md` completely.
+6. Read the current Forecast API contract in the forecasting repository:
    `docs/phase2_api_contract.md`.
-6. Run `git status -sb`, `git log -5 --oneline`, and `git remote -v`.
-7. Inspect the current implementation instead of assuming README descriptions
+7. Run `git status -sb`, `git log -5 --oneline`, and `git remote -v`.
+8. Inspect the current implementation instead of assuming README descriptions
    or older chat summaries are current.
-8. For a material architecture, official-data-source, navigation, or public
+9. For a material architecture, official-data-source, navigation, or public
    release change, list the exact intended files and behavior before editing.
 
 ## Repository boundaries

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.app.retrieval import retrieve_analyst_context
+from backend.app.governed_forecast_routes import create_governed_forecast_router
 from pio_platform.data_loader import DatasetBundle, list_workbook_sheets, load_dataset
 from backend.app.memory_store import list_analyst_memories, save_analyst_memory
 from pio_platform.forecasting import (
@@ -467,6 +468,7 @@ def _prewarm_default_forecast(workbook_id: str) -> None:
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(title="PIO Demand Intelligence API", version="0.1.0")
+app.include_router(create_governed_forecast_router())
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

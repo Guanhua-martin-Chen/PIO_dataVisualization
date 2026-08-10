@@ -168,10 +168,10 @@ export default function ForecastCenterPanel({
       <div className="tab-stack forecast-center-panel">
         <Card
           className="content-card"
-          title="Forecast Center controls"
+          title="Experimental Forecast controls"
           extra={(
             <Space wrap>
-              <Tooltip title={currentExportReady ? "" : "Prepare a governed run in Output Center first."}>
+              <Tooltip title={currentExportReady ? "" : "Prepare an experimental output run first."}>
                 <span>
                   <Button
                     icon={<DownloadOutlined />}
@@ -262,7 +262,7 @@ export default function ForecastCenterPanel({
               />
               <Input value="min avg qty/month" readOnly style={{ width: 170 }} />
             </Space.Compact>
-            <Button aria-label="Generate governed forecast" type="primary" onClick={onRun}>Generate forecast</Button>
+            <Button aria-label="Generate experimental forecast" type="primary" onClick={onRun}>Generate experimental forecast</Button>
           </div>
           {PRETRAINED_ML_STRATEGIES.has(modelStrategy) ? (
             <Alert
@@ -270,11 +270,11 @@ export default function ForecastCenterPanel({
               type="info"
               showIcon
               message="Pretrained CPU challenger"
-              description="Forecast Center loads the exact-source JSON artifact and performs inference only. Opening this page never trains a model and does not require a GPU."
+              description="This website-owned Forecast Lab loads its own artifact and performs inference only. It is not the approved Forecast API result."
             />
           ) : null}
           <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
-            HMA, GMA, and KUS are the official forecast anchors. Model and PLC values reconcile exactly to the parent.
+            HMA, GMA, and KUS are website experiment anchors. These values are not approved Forecast API records.
             HMA/GMA use dealer/non-fleet wholesale. KUS uses separate Wholesale and model-year-2027
             Carpet Floor Mat Fleet baskets from June 2026, with Fleet-first allocation and no double counting.
             IONIQ variants remain separate model entities.
@@ -341,7 +341,7 @@ export default function ForecastCenterPanel({
                 rowKey="brand"
                 dataSource={data.brandRecords}
                 columns={[
-                  { title: "Official anchor", dataIndex: "brand", key: "brand", width: 120 },
+                  { title: "Website anchor", dataIndex: "brand", key: "brand", width: 120 },
                   {
                     title: "Requested strategy",
                     dataIndex: "requestedModelStrategy",
@@ -404,10 +404,10 @@ export default function ForecastCenterPanel({
               <Card className="content-card" title="Rolling-origin contract">
                 <Paragraph className="workspace-copy">
                   H1 is one month ahead, H2 is two months ahead, and H3 is three months ahead.
-                  With 42 completed months and 24 months of minimum training, the governed contract
-                  has 18 H1, 17 H2, and 16 H3 Official Total common-origin rows (51 combined).
+                  With 42 completed months and 24 months of minimum training, the website evaluation contract
+                  has 18 H1, 17 H2, and 16 H3 website-total common-origin rows (51 combined).
                   The recent application H1 diagnostic contains Brand prediction rows and is not a
-                  same-scope ranking against the governed contract.
+                  same-scope ranking against the website evaluation contract.
                 </Paragraph>
                 <div role="region" aria-label="Evaluation scope table">
                   <Table
@@ -436,7 +436,7 @@ export default function ForecastCenterPanel({
                   type={data.summary.fairModelComparison.validationStatus.startsWith("validated") ? "success" : "warning"}
                   showIcon
                   message={data.summary.fairModelComparison.validationStatus}
-                  description={data.summary.fairModelComparison.disclosure || "Registered values are withheld because this request is not the complete governed scope."}
+                  description={data.summary.fairModelComparison.disclosure || "Registered values are withheld because this request is outside the complete experimental scope."}
                 />
                 <div role="region" aria-label="Fair model comparison table" style={{ marginTop: 16 }}>
                   <Table
@@ -451,7 +451,7 @@ export default function ForecastCenterPanel({
                       { title: "HMA", dataIndex: "hmaMethod", key: "hmaMethod", width: 280, render: (value: string) => <ModelIdentity modelId={value} /> },
                       { title: "GMA", dataIndex: "gmaMethod", key: "gmaMethod", render: (value: string) => <ModelIdentity modelId={value} /> },
                       { title: "KUS", dataIndex: "kusMethod", key: "kusMethod", render: (value: string) => <ModelIdentity modelId={value} /> },
-                      { title: "Official Total WAPE", dataIndex: "officialTotalWape", key: "officialTotalWape", align: "right" as const, render: (value: number) => `${(value * 100).toFixed(2)}%` },
+                      { title: "Website total WAPE", dataIndex: "officialTotalWape", key: "officialTotalWape", align: "right" as const, render: (value: number) => `${(value * 100).toFixed(2)}%` },
                       { title: "Common folds", dataIndex: "foldCount", key: "foldCount", align: "right" as const },
                     ]}
                     scroll={{ x: 1350 }}
@@ -500,7 +500,7 @@ export default function ForecastCenterPanel({
             <section aria-label="Forecast Exceptions">
               <Card className="content-card" title="Forecast Exceptions">
                 <Paragraph className="workspace-copy">
-                  This governed list is evaluated across Model, PLC, and PIS_PNO before
+                  This experimental list is evaluated across Model, PLC, and PIS_PNO before
                   eligibility filtering, and does not shrink when the displayed hierarchy level
                   changes. Reason codes appear only where their evidence is applicable. Series-level
                   findings show no single forecast month; forecast-specific findings name the actual
@@ -536,7 +536,7 @@ export default function ForecastCenterPanel({
                   to 0 ≤ lower ≤ point ≤ upper. Nominal and empirical coverage are reported separately.
                   {` ${data.summary.predictionIntervals.childCoveragePolicy}`}
                 </Paragraph>
-                <div role="region" aria-label="Official Total prediction interval table">
+                <div role="region" aria-label="Website total prediction interval table">
                   <Table
                     size="small"
                     pagination={false}
@@ -623,7 +623,7 @@ export default function ForecastCenterPanel({
               />
               <Paragraph className="workspace-copy" style={{ marginTop: 12, marginBottom: 0 }}>
                 KUS Fleet is retained as a separate basket from June 2026. Eligible model-year-2027 Carpet Floor Mat
-                quantity is allocated to Fleet first, and Wholesale plus Fleet reconcile to the official KUS total.
+                quantity is allocated to Fleet first, and Wholesale plus Fleet reconcile to the website KUS total.
                 Low-volume and stopped series receive no normal allocation;
                 new/reintroduced models use a recent run-rate proxy. Any unavoidable remainder is labeled Planner review residual.
               </Paragraph>
@@ -686,7 +686,7 @@ export default function ForecastCenterPanel({
                   { title: "Brand", dataIndex: "brandName", key: "brandName", render: (value: string, record: ForecastCenterRecord) => value || record.brand },
                   { title: "Model", dataIndex: "modelName", key: "modelName", render: (value: string) => value || "All models" },
                   { title: "PLC", dataIndex: "plc", key: "plc", render: (value: string) => value || "All PLCs" },
-                  { title: "Route", dataIndex: "allocationRoute", key: "allocationRoute", render: (value: string) => value || "Official anchor" },
+                  { title: "Route", dataIndex: "allocationRoute", key: "allocationRoute", render: (value: string) => value || "Website anchor" },
                   {
                     title: "Method",
                     dataIndex: "selectedModel",
@@ -753,7 +753,7 @@ export default function ForecastCenterPanel({
             ) : null}
           </>
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Generate a Forecast Center result." />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Generate an Experimental Forecast result." />
         )}
       </div>
     </div>

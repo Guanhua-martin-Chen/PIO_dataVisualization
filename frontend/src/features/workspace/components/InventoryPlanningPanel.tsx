@@ -25,10 +25,10 @@ export default function InventoryPlanningPanel({ data, loading, onRefresh }: Inv
         <Card className="content-card">
           <div className="major-tab-header">
             <div>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Inventory Planning</div>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Experimental Inventory Preview</div>
               <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                Experimental planning preview from a separate governed PIO Quantity forecast at Model × PLC grain.
-                Opening this page never replaces the main Forecast result.
+                Website-generated demand preview at Model × PLC grain. It never replaces or modifies
+                the approved Forecast API result.
               </Paragraph>
             </div>
             <Button type="primary" onClick={onRefresh}>Refresh Planning Preview</Button>
@@ -38,7 +38,7 @@ export default function InventoryPlanningPanel({ data, loading, onRefresh }: Inv
             type="warning"
             showIcon
             message="Experimental demand preview — not a reorder recommendation"
-            description="Current stock, on-order quantities, lead times, and exact-part reorder recommendations await governed PIS_PNO inventory inputs. No legacy WAPE or risk fallback is presented as governed."
+            description="Current stock, on-order quantities, lead times, and exact-part reorder recommendations are unavailable. This legacy preview is not presented as Official planning."
           />
         </Card>
 
@@ -78,7 +78,7 @@ export default function InventoryPlanningPanel({ data, loading, onRefresh }: Inv
           </Card>
         ) : (
           <Card className="content-card">
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Open Inventory Planning to load its governed quantity preview." />
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Open Inventory Preview to load its experimental quantity output." />
           </Card>
         )}
       </div>

@@ -840,7 +840,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         { signal: controller.signal },
       );
       if (!response.ok) {
-        throw new Error((await response.json()).detail ?? "Failed to load governed inventory planning.");
+        throw new Error((await response.json()).detail ?? "Failed to load experimental inventory planning.");
       }
       const payload = (await response.json()) as ForecastCenterPayload;
       if (!controller.signal.aborted) {
@@ -848,7 +848,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       }
     } catch (err) {
       if (!isAbortError(err)) {
-        messageApi.error(err instanceof Error ? err.message : "Failed to load governed inventory planning.");
+        messageApi.error(err instanceof Error ? err.message : "Failed to load experimental inventory planning.");
       }
     } finally {
       if (inventoryPlanningRequest.current === controller) {
@@ -1110,7 +1110,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         );
       }
       messageApi.info(
-        "Forecast Center synchronized governed HMA/GMA/KUS, model, and date filters. Source H/K, search, model year, and part filters stay in Data Workspace because they do not match the anchor grain."
+        "Experimental Forecast synchronized HMA/GMA/KUS, model, and date filters. This website-owned result remains separate from Official Forecast."
       );
       return;
     }
@@ -1174,7 +1174,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     };
     loadAnomalyData(resolveForecastSheetName(workspace.sheetName), compatibleState);
     messageApi.success(
-      "Exceptions refreshed from governed PIO data with compatible Brand, Model, and date filters",
+      "Experimental exceptions refreshed with compatible Brand, Model, and date filters",
     );
   }
 
@@ -1442,7 +1442,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
 
   function exportForecastCenterCsv() {
     if (!workbook || !workspace || !validForecastOutputRun) {
-      messageApi.warning("Prepare a governed run in Output Center first.");
+      messageApi.warning("Prepare a website-generated experimental run first.");
       return;
     }
     const params = new URLSearchParams({
@@ -1484,7 +1484,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         },
       );
       if (!response.ok) {
-        throw new Error((await response.json()).detail ?? "Failed to prepare governed output run.");
+        throw new Error((await response.json()).detail ?? "Failed to prepare experimental output run.");
       }
       const payload = (await response.json()) as ForecastOutputRunPreview;
       if (forecastOutputIdentityRef.current !== requestFingerprint) {
@@ -1492,9 +1492,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
         return;
       }
       setForecastOutputRun(payload);
-      messageApi.success(payload.reused ? "Reused the complete governed run." : "Governed output run is ready.");
+      messageApi.success(payload.reused ? "Reused the complete experimental run." : "Experimental output run is ready.");
     } catch (err) {
-      messageApi.error(err instanceof Error ? err.message : "Failed to prepare governed output run.");
+      messageApi.error(err instanceof Error ? err.message : "Failed to prepare experimental output run.");
     } finally {
       setForecastOutputRunLoading(false);
     }
@@ -1625,21 +1625,29 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
     );
   }
 
-  function renderGovernedForecasting() {
+  function renderExperimentalForecasting() {
     if (!workspace) return null;
 
     return (
       <div className="major-tab-stack">
+        <Alert
+          type="warning"
+          showIcon
+          message="Legacy / Experimental — Not Official Forecast"
+          description="These views run or display website-owned forecasting logic. They are retained for analysis only and never replace the approved Forecast API output shown on the Official Forecast pages."
+        />
         <Card className="content-card major-tab-intro">
           <div className="major-tab-header">
             <div>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Forecasting</div>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Legacy / Experimental</div>
               <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                One governed forecast entry, a governed exception review, an experimental inventory-demand preview,
-                and one centralized output hub.
+                Website-generated forecast experiments, exception diagnostics, inventory previews, and non-official downloads.
               </Paragraph>
             </div>
-            <Tag color="blue">Source: PIO_Sales_Data + all compatible Wholesale sheets</Tag>
+            <Space wrap>
+              <Tag color="red">NOT OFFICIAL</Tag>
+              <Tag>Uploaded workspace sources</Tag>
+            </Space>
           </div>
         </Card>
 
@@ -1652,8 +1660,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               key: "forecast",
               label: (
                 <span className="workspace-subtab-label">
-                  <strong>Forecast</strong>
-                  <small>Governed plan</small>
+                  <strong>Experimental Forecast</strong>
+                  <small>Website-generated</small>
                 </span>
               ),
               children: (
@@ -1685,8 +1693,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               key: "exceptions",
               label: (
                 <span className="workspace-subtab-label">
-                  <strong>Exceptions</strong>
-                  <small>Review queue</small>
+                  <strong>Experimental Exceptions</strong>
+                  <small>Website diagnostics</small>
                 </span>
               ),
               children: (
@@ -1709,7 +1717,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               key: "inventory",
               label: (
                 <span className="workspace-subtab-label">
-                  <strong>Inventory Planning</strong>
+                  <strong>Inventory Preview</strong>
                   <small>Experimental</small>
                 </span>
               ),
@@ -1729,8 +1737,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               key: "leaderboard",
               label: (
                 <span className="workspace-subtab-label">
-                  <strong>Algorithm Leaderboard</strong>
-                  <small>Brand-level evidence</small>
+                  <strong>Experimental Leaderboard</strong>
+                  <small>Website evaluation</small>
                 </span>
               ),
               children: (
@@ -1744,8 +1752,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
               key: "output",
               label: (
                 <span className="workspace-subtab-label">
-                  <strong>Output Center</strong>
-                  <small>Downloads</small>
+                  <strong>Experimental Outputs</strong>
+                  <small>Not Sponsor workbook</small>
                 </span>
               ),
               children: renderOutputCenterPanel(),
@@ -2083,7 +2091,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                   columns={[
                     { title: "Source code", dataIndex: "sourceCode", key: "sourceCode" },
                     {
-                      title: "Official anchor",
+                      title: "Website anchor",
                       dataIndex: "anchorBrand",
                       key: "anchorBrand",
                       render: (value: string) => <Tag color={value === "KUS" ? "purple" : value === "GMA" ? "cyan" : "blue"}>{value}</Tag>,
@@ -2507,15 +2515,15 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
       {contextHolder}
 
       <div style={{ marginBottom: 20 }}>
-        <Link href="/" style={{ color: "var(--accent)", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <LeftOutlined style={{ fontSize: 12 }} /> Back to Home
+        <Link href="/data-workspace" style={{ color: "var(--accent)", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <LeftOutlined style={{ fontSize: 12 }} /> Back to Data Workspace
         </Link>
       </div>
 
       {loading ? (
         <WorkspaceLoading message={loadingMsg} />
       ) : error ? (
-        <WorkspaceError error={error} onGoHome={() => router.push("/")} />
+        <WorkspaceError error={error} onGoHome={() => router.push("/data-workspace")} />
       ) : workspace ? (
         <section className="workspace-shell">
           <WorkspaceHeader
@@ -3395,8 +3403,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                       <AreaChartOutlined />
                     </span>
                     <span className="major-tab-copy">
-                      <strong>Forecast Center</strong>
-                      <small>Backtest, explain, and export forecasts</small>
+                      <strong>Legacy / Experimental</strong>
+                      <small>Website-generated forecast lab</small>
                     </span>
                   </div>
                 ),
@@ -3405,9 +3413,9 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                     <Card className="content-card major-tab-intro">
                       <div className="major-tab-header">
                         <div>
-                          <div className="eyebrow" style={{ marginBottom: 8 }}>Forecast Center</div>
+                          <div className="eyebrow" style={{ marginBottom: 8 }}>Legacy / Experimental Forecast Lab</div>
                           <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                            Review anomaly signals, understand structural demand changes, and inspect part-level forecast confidence in one place.
+                            Not Official Forecast. Review website-owned anomaly signals, model experiments, and part-level diagnostics here.
                           </Paragraph>
                         </div>
                         <div>
@@ -3419,7 +3427,7 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                                 setForecastView("output");
                               }}
                             >
-                              Open Output Center
+                              Open Experimental Outputs
                             </Button>
                           </Space>
                           <div style={{ marginTop: 6, color: "#6b7b95", fontSize: 12, textAlign: "right" }}>
@@ -3717,8 +3725,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                 key: "forecast",
                 label: (
                   <span className="workspace-subtab-label">
-                    <strong>Forecast Center</strong>
-                    <small>Output</small>
+                    <strong>Experimental Forecast</strong>
+                    <small>Website output</small>
                   </span>
                 ),
                 children: (
@@ -3727,11 +3735,11 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                       <div className="tab-stack">
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                           <div>
-                            <div className="eyebrow" style={{ marginBottom: 8 }}>Part-Month Baseline Forecast</div>
+                            <div className="eyebrow" style={{ marginBottom: 8 }}>Experimental Part-Month Baseline</div>
                             <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
                               {forecastView === "hierarchy"
-                                ? "Forecast Center always uses the governed PIO_Sales_Data source. Anchor, model, and date filters are separate from the active Data Workspace sheet."
-                                : "Choose a time range, business slice, and focus part directly in Forecast Center. The result includes chart output, forecast table, and downloadable Excel."}
+                                ? "This website experiment uses PIO_Sales_Data and is separate from the approved Forecast API run."
+                                : "Choose a time range, business slice, and focus part for a non-official website-generated result."}
                             </Paragraph>
                           </div>
                           <Space wrap>
@@ -3739,8 +3747,8 @@ export default function WorkspacePage({ params }: WorkspacePageProps) {
                               style={{ width: 180 }}
                               value={forecastView}
                               options={[
-                                { label: "Forecast Center", value: "hierarchy" },
-                                { label: "Output Center", value: "output" },
+                                { label: "Experimental Forecast", value: "hierarchy" },
+                                { label: "Experimental Outputs", value: "output" },
                                 { label: "Detail", value: "detail" },
                                 { label: "Leaderboard", value: "leaderboard" },
                                 { label: "Series Table", value: "series" },
@@ -4876,7 +4884,7 @@ final_forecast = max(0, y_hat * max(0, 1 + tariff_pct/100))`}</pre>
                       </>
                     ) : (
                       <Card className="content-card">
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Run Forecast Center first, then open Inventory Simulator." />
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Run the Experimental Forecast first, then open Inventory Preview." />
                       </Card>
                     )}
                   </div>
@@ -4885,7 +4893,7 @@ final_forecast = max(0, y_hat * max(0, 1 + tariff_pct/100))`}</pre>
                       ]}
                     />
                   </div>
-                ) : renderGovernedForecasting(),
+                ) : renderExperimentalForecasting(),
               },
               {
                 key: "agent",

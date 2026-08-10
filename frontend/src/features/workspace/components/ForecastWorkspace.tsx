@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Card, DatePicker, Popover, Select, Space, Typography } from "antd";
+import { Alert, Button, Card, DatePicker, Popover, Select, Space, Typography } from "antd";
 import dayjs from "dayjs";
 import type { ReactNode } from "react";
 
@@ -32,14 +32,19 @@ export default function ForecastWorkspace({
 }: ForecastWorkspaceProps) {
   return (
     <div className="tab-stack">
+      <Alert
+        type="warning"
+        showIcon
+        message="Experimental website forecast — not an approved Forecast API result"
+        description="Use the Official Forecast navigation for sponsor-facing values, frozen model selections, QA, and the approved workbook."
+      />
       <Card className="content-card">
         <div className="tab-stack">
           <div className="major-tab-header">
             <div>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Governed Forecast</div>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Experimental Forecast Controls</div>
               <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                Forecast always resolves to PIO_Sales_Data. Brand, Model, and date filters are independent of the
-                worksheet currently open in Data Workspace.
+                This website-owned experiment resolves to PIO_Sales_Data. Its filters and outputs do not alter the approved run.
               </Paragraph>
             </div>
             <Space wrap>
@@ -50,12 +55,12 @@ export default function ForecastWorkspace({
                 content={(
                   <div style={{ maxWidth: 440 }}>
                     <Paragraph>
-                      Synchronization copies only official Brand (HMA/GMA/KUS), Model, and start/end dates.
+                      Synchronization copies only Brand (HMA/GMA/KUS), Model, and start/end dates.
                       It clears search, model year, and part filters. Forecast always uses PIO_Sales_Data plus
-                      governed Wholesale history, regardless of the Data Table sheet.
+                      website-loaded Wholesale history, regardless of the Data Table sheet.
                     </Paragraph>
                     <Paragraph style={{ marginBottom: 0 }}>
-                      Governed validation is expanding rolling origin at H1/H2/H3. application_recent_h1 is not
+                      Experimental validation is expanding rolling origin at H1/H2/H3. application_recent_h1 is not
                       part of the 51-fold ranking. Allocation-only diagnostics supply the held-out actual parent
                       solely to isolate share error and are not end-to-end accuracy. Reconciliation is arithmetic
                       only. Intervals use held-out residual calibration; child interval coverage remains unvalidated

@@ -31,13 +31,13 @@ export default function ExceptionsPanel({ data, loading, onRefresh }: Exceptions
         <Card className="content-card">
           <div className="major-tab-header">
             <div>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Forecast Exceptions</div>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Experimental Forecast Exceptions</div>
               <Paragraph className="workspace-copy" style={{ marginBottom: 0 }}>
-                Governed review queue from the same Forecast Center payload shown on the Forecast
-                tab. Evidence is cutoff-safe and includes a reason code and suggested planner action.
+                Website-generated review queue from the same experimental payload. It does not
+                modify or override any approved Forecast API record.
               </Paragraph>
             </div>
-            <Button type="primary" onClick={onRefresh}>Refresh governed forecast</Button>
+            <Button type="primary" onClick={onRefresh}>Refresh experimental forecast</Button>
           </div>
           {data ? (
             <div className="health-grid" style={{ marginTop: 16 }}>
@@ -63,7 +63,7 @@ export default function ExceptionsPanel({ data, loading, onRefresh }: Exceptions
               <Col xs={12} lg={6}><Card className="metric-card"><Statistic title="Forecast-month findings" value={monthlyCount} /></Card></Col>
               <Col xs={12} lg={6}><Card className="metric-card"><Statistic title="Reconciliation" value={data.summary.reconciliation.status} /></Card></Col>
             </Row>
-            <Card className="content-card" title="Governed review queue">
+            <Card className="content-card" title="Experimental review queue">
               <Table
                 size="small"
                 rowKey="exceptionId"
@@ -120,7 +120,7 @@ export default function ExceptionsPanel({ data, loading, onRefresh }: Exceptions
           <Card className="content-card">
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="Open Exceptions to load the shared governed Forecast Center result."
+              description="Open Exceptions to load the shared experimental website result."
             />
           </Card>
         )}

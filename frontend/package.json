@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "preview": "next build && next start --hostname 127.0.0.1 --port 3001"
+    "preview": "next build && next start --hostname 127.0.0.1 --port 3001",
+    "test:official-forecast": "node --test src/features/official-forecast/__tests__/viewModels.test.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

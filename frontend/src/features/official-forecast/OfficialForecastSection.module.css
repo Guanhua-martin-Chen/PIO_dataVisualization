@@ -1,0 +1,365 @@
+.page {
+  width: min(1320px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 18px 0 44px;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 34px 4px 24px;
+}
+
+.hero > div > span,
+.sectionHeading span,
+.metricCard > span,
+.hashCard > span,
+.outputHero > div > span,
+.metaStrip > div > span {
+  color: #64748b;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 7px 0 6px;
+  color: #102139;
+  font-family: "Manrope", sans-serif;
+  font-size: clamp(34px, 4vw, 50px);
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.hero p {
+  max-width: 780px;
+  margin: 0;
+  color: #65758a;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.loading,
+.errorState,
+.tableCard,
+.emptyState,
+.outputHero,
+.hashCard {
+  border: 1px solid #dce5ef;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 16px 40px rgba(18, 38, 64, 0.06);
+}
+
+.loading,
+.errorState {
+  padding: 30px;
+}
+
+.errorState > button {
+  margin-top: 16px;
+}
+
+.metaStrip {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) repeat(3, minmax(140px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  padding: 1px;
+  border-radius: 17px;
+  background: #dbe4ef;
+  box-shadow: 0 12px 32px rgba(17, 37, 64, 0.05);
+}
+
+.metaStrip > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 15px 18px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.metaStrip > div:first-child {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  color: #20824a;
+}
+
+.metaStrip > div:first-child span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.metaStrip strong {
+  overflow: hidden;
+  color: #1d3049;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaStrip small {
+  overflow: hidden;
+  color: #718095;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metricCard {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border: 1px solid #dce5ef;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.93);
+  box-shadow: 0 14px 34px rgba(18, 38, 64, 0.055);
+}
+
+.metricCard strong {
+  margin-top: 20px;
+  color: #172942;
+  font-family: "Manrope", sans-serif;
+  font-size: clamp(26px, 2.8vw, 36px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.metricCard small {
+  margin-top: auto;
+  padding-top: 10px;
+  color: #718095;
+  font-size: 11px;
+}
+
+.tableCard {
+  overflow: hidden;
+  padding: 22px;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.sectionHeading h2 {
+  margin: 5px 0 0;
+  color: #172942;
+  font-family: "Manrope", sans-serif;
+  font-size: 20px;
+  letter-spacing: -0.025em;
+}
+
+.inlineAlert {
+  margin-bottom: 18px;
+}
+
+.qaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.qaGrid article {
+  min-height: 105px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+  border: 1px solid #dce5ef;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.qaGrid span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #66768b;
+  font-size: 11px;
+}
+
+.qaGrid strong {
+  color: #1c304a;
+  font-family: "Manrope", sans-serif;
+  font-size: 19px;
+}
+
+.pass {
+  color: #24844e;
+}
+
+.fail {
+  color: #c38924;
+}
+
+.emptyState {
+  padding: 64px 30px;
+  text-align: center;
+}
+
+.emptyState > span:first-child {
+  color: #b07a1f;
+  font-size: 34px;
+}
+
+.emptyState h2 {
+  margin: 18px 0 8px;
+  color: #172942;
+  font-family: "Manrope", sans-serif;
+}
+
+.emptyState p {
+  max-width: 620px;
+  margin: 0 auto 18px;
+  color: #6e7e92;
+  line-height: 1.7;
+}
+
+.recordsPreview {
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f4f7fb;
+  color: #263b55;
+  font-size: 11px;
+}
+
+.outputHero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 26px;
+}
+
+.outputIcon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  color: #1d58bd;
+  background: #e9f1ff;
+  font-size: 23px;
+}
+
+.outputHero h2 {
+  overflow-wrap: anywhere;
+  margin: 5px 0 5px;
+  color: #172942;
+  font-family: "Manrope", sans-serif;
+  font-size: 22px;
+}
+
+.outputHero p {
+  max-width: 700px;
+  margin: 0;
+  color: #6e7e92;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.hashCard {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 22px;
+}
+
+.hashCard code {
+  overflow-wrap: anywhere;
+  color: #1d3049;
+  font-size: 12px;
+}
+
+.hashCard small {
+  color: #738297;
+  font-size: 11px;
+}
+
+.footer {
+  padding: 20px 4px 0;
+  color: #748398;
+  font-size: 11px;
+  text-align: center;
+}
+
+@media (max-width: 1000px) {
+  .metaStrip,
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .qaGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .page {
+    width: min(100vw - 24px, 1320px);
+    padding-top: 10px;
+  }
+
+  .hero {
+    align-items: stretch;
+    flex-direction: column;
+    padding-top: 26px;
+  }
+
+  .hero button {
+    width: fit-content;
+  }
+
+  .metaStrip,
+  .metricGrid,
+  .qaGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .outputHero {
+    grid-template-columns: 1fr;
+  }
+
+  .outputHero a {
+    width: fit-content;
+  }
+}
