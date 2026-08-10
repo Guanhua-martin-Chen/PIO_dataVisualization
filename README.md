@@ -1,5 +1,36 @@
 # PIO Demand Intelligence Platform
 
+## Governed Forecast delivery
+
+This public repository is the web and interaction layer of a two-repository
+capstone system. It does **not** contain or reimplement the official forecasting
+models.
+
+- **Official Forecast** pages read one immutable approved run through the
+  website's server-side proxy. The browser never receives the governed API key.
+- **Update Forecast** is a protected operator workflow for four governed source
+  roles: CapStone/PIO, HMA Plan, GMA Plan, and Kia Plan. It validates the files,
+  starts the existing private forecasting pipeline, displays QA and a Draft Run,
+  and publishes only after explicit approval.
+- **Data Workspace** remains exploratory and cannot change the Official
+  Forecast.
+- The forecasting system of record is maintained independently in
+  `pio-accessories-forecasting-optimization`. Company workbooks, approved-run
+  bundles, Sponsor workbooks, API keys, and private deployment URLs must never
+  be committed here.
+
+The monthly governed flow is:
+
+```text
+Four source-role uploads -> validation -> existing forecast pipeline -> QA
+-> Draft Run -> review/approve -> immutable Approved Run
+-> Dashboard and exact Sponsor XLSX update together
+```
+
+A failed upload, pipeline run, or QA gate leaves the previous approved
+Dashboard and Sponsor workbook unchanged. See [DEPLOYMENT.md](DEPLOYMENT.md)
+for the local three-service setup, demo-link instructions, and handoff notes.
+
 **中文** | [English](#english-version)
 
 > **汽车零部件需求规划团队的智能工作台** — 从原始 Excel 工作簿导出到结构化规划工作区，一步完成。

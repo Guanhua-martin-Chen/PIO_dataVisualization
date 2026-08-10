@@ -46,3 +46,52 @@ class GovernedRunSummaryResponse(BaseModel):
     sponsor_workbook_filename: str
     sponsor_workbook_sha256: str
     validation: dict[str, Any] = Field(default_factory=dict)
+
+
+class ForecastUpdateFileValidation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["capstone", "hma_plan", "gma_plan", "kia_plan"]
+    filename: str
+    size_bytes: int
+    sha256: str
+    valid: bool
+    summary: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ForecastUpdateJob(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    status: Literal[
+        "validated",
+        "validation_failed",
+        "queued",
+        "running",
+        "qa_failed",
+        "awaiting_approval",
+        "publishing",
+        "published",
+        "failed",
+    ]
+    created_at: str
+    updated_at: str
+    files: list[ForecastUpdateFileValidation]
+    progress: dict[str, Any]
+    qa: dict[str, Any] | None = None
+    draft: dict[str, Any] | None = None
+    approved_run_id: str | None = None
+    error: str | None = None
+
+
+class ForecastUpdateJobEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job: ForecastUpdateJob
+
+
+class ForecastUpdateJobList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    jobs: list[ForecastUpdateJob]

@@ -8,6 +8,8 @@ from pydantic import BaseModel, ValidationError
 
 from backend.app.governed_forecast_config import GovernedForecastConfig
 from backend.app.governed_forecast_contracts import (
+    ForecastUpdateJobEnvelope,
+    ForecastUpdateJobList,
     GovernedEndpointEnvelope,
     GovernedHealthResponse,
     GovernedRunSummaryResponse,
@@ -131,6 +133,97 @@ class GovernedForecastClient:
             raise _upstream_http_error(response.status_code)
         return GovernedForecastDownload(response=response, client=client)
 
+    def create_forecast_update(
+        self,
+        *,
+        token: str,
+        files: dict[str, tuple[str, Any, str]],
+    ) -> dict[str, Any]:
+        return self._update_json(
+            "POST",
+            "/api/v1/admin/forecast-updates",
+            token=token,
+            contract=ForecastUpdateJobEnvelope,
+            files=files,
+        )
+
+    def list_forecast_updates(self, *, token: str) -> dict[str, Any]:
+        return self._update_json(
+            "GET",
+            "/api/v1/admin/forecast-updates",
+            token=token,
+            contract=ForecastUpdateJobList,
+        )
+
+    def forecast_update(self, job_id: str, *, token: str) -> dict[str, Any]:
+        return self._update_json(
+            "GET",
+            f"/api/v1/admin/forecast-updates/{job_id}",
+            token=token,
+            contract=ForecastUpdateJobEnvelope,
+        )
+
+    def run_forecast_update(self, job_id: str, *, token: str) -> dict[str, Any]:
+        return self._update_json(
+            "POST",
+            f"/api/v1/admin/forecast-updates/{job_id}/run",
+            token=token,
+            contract=ForecastUpdateJobEnvelope,
+        )
+
+    def approve_forecast_update(self, job_id: str, *, token: str) -> dict[str, Any]:
+        return self._update_json(
+            "POST",
+            f"/api/v1/admin/forecast-updates/{job_id}/approve",
+            token=token,
+            contract=ForecastUpdateJobEnvelope,
+        )
+
+    def _update_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        token: str,
+        contract: type[TContract],
+        files: dict[str, tuple[str, Any, str]] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(max(self.config.timeout_seconds, 120.0)),
+                transport=self.transport,
+                follow_redirects=False,
+            ) as client:
+                response = client.request(
+                    method,
+                    self._url(path),
+                    headers={"X-Forecast-Update-Token": token},
+                    files=files,
+                )
+        except httpx.TimeoutException as exc:
+            raise GovernedForecastProxyError(
+                504,
+                "forecast_update_timeout",
+                "The forecast update service timed out.",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise GovernedForecastProxyError(
+                502,
+                "forecast_update_unavailable",
+                "The forecast update service is unavailable.",
+            ) from exc
+        if not response.is_success:
+            raise _update_http_error(response)
+        try:
+            payload = contract.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise GovernedForecastProxyError(
+                502,
+                "forecast_update_contract_error",
+                "The forecast update response does not match the supported contract.",
+            ) from exc
+        return payload.model_dump(mode="json")
+
     def _get_json(
         self,
         path: str,
@@ -229,4 +322,34 @@ def _upstream_http_error(status_code: int) -> GovernedForecastProxyError:
         502,
         "governed_forecast_upstream_error",
         "The governed Forecast API request failed.",
+    )
+
+
+def _update_http_error(response: httpx.Response) -> GovernedForecastProxyError:
+    status_code = response.status_code
+    message = "The forecast update request failed."
+    try:
+        detail = response.json().get("detail")
+        if isinstance(detail, str) and detail:
+            message = detail
+    except ValueError:
+        pass
+    if status_code in {401, 403}:
+        return GovernedForecastProxyError(
+            401,
+            "forecast_update_unauthorized",
+            "The operator access code is invalid.",
+        )
+    if status_code == 404:
+        return GovernedForecastProxyError(404, "forecast_update_not_found", message)
+    if status_code in {409, 422}:
+        return GovernedForecastProxyError(status_code, "forecast_update_blocked", message)
+    if status_code == 503:
+        return GovernedForecastProxyError(
+            503,
+            "forecast_update_not_configured",
+            "The protected forecast update workflow is not configured.",
+        )
+    return GovernedForecastProxyError(
+        502, "forecast_update_upstream_error", "The forecast update service failed."
     )

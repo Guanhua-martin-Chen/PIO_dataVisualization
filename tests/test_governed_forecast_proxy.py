@@ -30,6 +30,29 @@ RUN_METADATA = {
     "forecast_end": "2027-06-01",
     "source_git_commit": "synthetic",
 }
+UPDATE_JOB = {
+    "job_id": "a" * 32,
+    "status": "validated",
+    "created_at": "2030-01-01T00:00:00Z",
+    "updated_at": "2030-01-01T00:00:00Z",
+    "files": [
+        {
+            "role": role,
+            "filename": f"synthetic-{role}.xlsx",
+            "size_bytes": 10,
+            "sha256": "a" * 64,
+            "valid": True,
+            "summary": "Synthetic role passed.",
+            "details": {},
+        }
+        for role in ("capstone", "hma_plan", "gma_plan", "kia_plan")
+    ],
+    "progress": {"stage": "validation", "percent": 10, "message": "Validated"},
+    "qa": None,
+    "draft": None,
+    "approved_run_id": None,
+    "error": None,
+}
 
 
 def _config() -> GovernedForecastConfig:
@@ -77,6 +100,46 @@ class GovernedForecastConfigurationTests(unittest.TestCase):
 
 
 class GovernedForecastProxyTests(unittest.TestCase):
+    def test_forecast_update_upload_is_protected_and_streamed_to_private_backend(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            self.assertEqual(request.url.path, "/api/v1/admin/forecast-updates")
+            self.assertEqual(
+                request.headers.get("x-forecast-update-token"), "synthetic-token"
+            )
+            self.assertNotIn("x-api-key", request.headers)
+            body = request.content
+            for role in ("capstone", "hma_plan", "gma_plan", "kia_plan"):
+                self.assertIn(role.encode(), body)
+                self.assertIn(f"synthetic-{role}.xlsx".encode(), body)
+            return httpx.Response(200, json={"job": UPDATE_JOB})
+
+        client = _client(handler)
+        files = {
+            role: (
+                f"synthetic-{role}.xlsx",
+                f"synthetic-{role}".encode(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            for role in ("capstone", "hma_plan", "gma_plan", "kia_plan")
+        }
+        unauthorized = client.post(
+            f"{PROXY_PREFIX}/admin/forecast-updates", files=files
+        )
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(requests, [])
+
+        response = client.post(
+            f"{PROXY_PREFIX}/admin/forecast-updates",
+            files=files,
+            headers={"X-Forecast-Update-Token": "synthetic-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["job"]["status"], "validated")
+        self.assertEqual(len(requests), 1)
+
     def test_top_movers_is_proxied_without_reordering_and_watchlist_is_removed(self) -> None:
         upstream_movers = [
             {"rank": 1, "plc": "PLC-B", "absolute_revenue_change": 900.0},

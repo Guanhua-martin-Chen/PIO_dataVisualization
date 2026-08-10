@@ -169,16 +169,49 @@ Current approved-output limitations shown honestly by the UI:
   not a same-target forecast revision, actual/nowcast change, alert, anomaly,
   materiality classification, or causal explanation.
 
-## Not yet implemented
+## Forecast Update workflow implemented locally
 
-- automated cross-repository integration tests;
-- protected admin upload -> asynchronous run -> QA -> review/approval
-  orchestration;
-- private Sponsor deployment;
-- final deployment security, accessibility, and release-readiness review.
+The protected student-capstone orchestration is now implemented across the two
+independent repositories:
 
-## Immediate next task
+- one operator token protects all update routes; enterprise identity remains a
+  deployment extension;
+- four governed source roles are uploaded through the website's server-side
+  proxy and validated by the existing forecasting-repository readers;
+- the current production pipeline runs in an isolated, git-ignored job
+  workspace and continues to consume frozen governance artifacts;
+- validation, job progress, QA/reconciliation, Draft review, and explicit
+  approval are visible on `/official-forecast/update`;
+- validation, pipeline, QA, and publication failures leave the previous
+  approved run unchanged;
+- only approval invokes the immutable approved-run publisher, switching the
+  Forecast API, Dashboard, and exact Sponsor workbook together;
+- synthetic end-to-end tests cover authorization, upload, validation, queued
+  execution, QA failure, pipeline failure, Draft isolation, and approval;
+- the Official Forecast API key remains server-side, and runtime uploads,
+  approved bundles, company workbooks, and secrets remain outside Git.
 
-Design and implement the separate authenticated upload-to-approved-run backend
-orchestration, while keeping the previous approved run visible on failures and
-updating the Dashboard and Sponsor workbook only after approval.
+Validated on 2026-08-10:
+
+- 125 forecasting-repository tests passed, including the new workflow plus
+  existing API contract, privacy, reconciliation, publisher, and Kia Fleet
+  regression coverage;
+- 13 website proxy tests and 14 Official Forecast view-model tests passed;
+- TypeScript checking and the Next.js production build passed; Next.js also
+  completed its configured lint/type validation stage;
+- live local requests returned `401` without the update token and `200` through
+  both the website proxy and governed API with the token;
+- all five Official Forecast areas plus Update Forecast loaded at desktop size
+  without page-level horizontal overflow;
+- Overview and Update Forecast loaded at a 390-pixel viewport without
+  page-level horizontal overflow.
+
+## Remaining delivery work
+
+- run the first operator acceptance update with a new real monthly source set
+  when that governed data becomes available;
+- create the final B release commits/tags and upstream pull request after visual
+  confirmation;
+- create a temporary ngrok demo link for reviewers;
+- let Mobis choose permanent hosting, enterprise identity, infrastructure, and
+  retention controls in its own environment.

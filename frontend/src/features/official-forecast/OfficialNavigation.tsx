@@ -1,6 +1,6 @@
 "use client";
 
-import { DatabaseOutlined } from "@ant-design/icons";
+import { CloudUploadOutlined, DatabaseOutlined } from "@ant-design/icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -44,10 +44,19 @@ export default function OfficialNavigation({ query = {} }: { query?: OfficialQue
             <small>Governed planning view</small>
           </span>
         </Link>
-        <Link href="/data-workspace" className={styles.workspaceLink}>
-          <DatabaseOutlined /> Data Workspace
-          <small>Exploratory</small>
-        </Link>
+        <div className={styles.topActions}>
+          <Link
+            href="/official-forecast/update"
+            className={`${styles.updateLink} ${pathname === "/official-forecast/update" ? styles.activeAction : ""}`}
+          >
+            <CloudUploadOutlined /> Update Forecast
+            <small>Protected</small>
+          </Link>
+          <Link href="/data-workspace" className={styles.workspaceLink}>
+            <DatabaseOutlined /> Data Workspace
+            <small>Exploratory</small>
+          </Link>
+        </div>
       </div>
       <nav className={styles.navigation} aria-label="Official Forecast navigation">
         {officialLinks.map((link) => {

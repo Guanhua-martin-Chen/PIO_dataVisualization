@@ -42,12 +42,20 @@
 }
 
 .brand small,
-.workspaceLink small {
+.workspaceLink small,
+.updateLink small {
   color: #68778b;
   font-size: 11px;
 }
 
-.workspaceLink {
+.topActions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.workspaceLink,
+.updateLink {
   display: inline-grid;
   grid-template-columns: auto auto;
   align-items: center;
@@ -61,8 +69,19 @@
   font-weight: 700;
 }
 
-.workspaceLink small {
+.workspaceLink small,
+.updateLink small {
   grid-column: 2;
+}
+
+.updateLink {
+  color: #153f83;
+  border-color: #c9d8ef;
+}
+
+.activeAction {
+  background: #e7effd;
+  border-color: #aac4eb;
 }
 
 .navigation {
@@ -107,6 +126,10 @@
 
   .workspaceLink {
     width: fit-content;
+  }
+
+  .topActions {
+    flex-wrap: wrap;
   }
 
   .navigation {
