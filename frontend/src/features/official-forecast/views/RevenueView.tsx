@@ -6,6 +6,7 @@ import { donutOption, revenueTrendOption } from "../charts/chartOptions";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import PeriodBadge from "../components/PeriodBadge";
+import { PnvwNote, PnvwValue } from "../components/PnvwValue";
 import type { GovernedForecastRecord, RevenueEnvelope } from "../contract";
 import { compactCurrency, exactCurrency, formatText, monthLabel, revenueSourceLabel } from "../formatters";
 import { primaryRevenueRows, revenueValue, uniqueMonths } from "../viewModels";
@@ -29,7 +30,7 @@ export default function RevenueView({ payload, month, onMonthChange }: { payload
     { title: "Period", dataIndex: "period_type", key: "period", render: (value) => <PeriodBadge value={value} /> },
     { title: "Official revenue", key: "revenue", align: "right", render: (_, row) => exactCurrency(revenueValue(row)) },
     { title: "Regular non-Fleet", dataIndex: "forecast_pio_revenue_regular_nonfleet", key: "regular", align: "right", render: exactCurrency },
-    { title: "Regular PNVW ($ / vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: exactCurrency },
+    { title: "Regular PNVW ($ / vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: (_, row) => <PnvwValue value={row.pnvw} selectedWholesale={row.selected_hybrid_wholesale} forecastComponent={row.forecast_component} /> },
     { title: "Source", dataIndex: "revenue_forecast_source", key: "source", render: (value) => <Tag title={formatText(value)}>{revenueSourceLabel(value)}</Tag> },
     { title: "Confidence", dataIndex: "confidence_level", key: "confidence", render: (value) => <Tag>{formatText(value)}</Tag> },
   ];
@@ -39,7 +40,7 @@ export default function RevenueView({ payload, month, onMonthChange }: { payload
     { title: "Component", dataIndex: "forecast_component", key: "component", render: (value) => <Tag color={value === "kia_fleet_cfm_adjustment" ? "gold" : "blue"}>{value === "kia_fleet_cfm_adjustment" ? "Kia Fleet" : "Regular"}</Tag> },
     { title: "Period", dataIndex: "period_type", key: "period", render: (value) => <PeriodBadge value={value} /> },
     { title: "Official revenue", key: "revenue", align: "right", render: (_, row) => exactCurrency(revenueValue(row)) },
-    { title: "Regular PNVW ($ / vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: exactCurrency },
+    { title: "Regular PNVW ($ / vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: (_, row) => <PnvwValue value={row.pnvw} selectedWholesale={row.selected_hybrid_wholesale} forecastComponent={row.forecast_component} /> },
     { title: "Source", dataIndex: "revenue_forecast_source", key: "source", render: (value) => <Tag title={formatText(value)}>{revenueSourceLabel(value)}</Tag> },
     { title: "Confidence", dataIndex: "confidence_level", key: "confidence", render: (value) => <Tag>{formatText(value)}</Tag> },
   ];
@@ -61,6 +62,7 @@ export default function RevenueView({ payload, month, onMonthChange }: { payload
         { key: "brand", label: `Brand (${brands.length})`, children: <Table columns={brandColumns} dataSource={brands} rowKey={(row) => `${row.forecast_month}-${row.brand_group}-${row.record_type}`} pagination={false} scroll={{ x: 900 }} size="small" /> },
         { key: "model", label: `Model (${models.length})`, children: <Table columns={modelColumns} dataSource={models} rowKey={(row) => `${row.forecast_month}-${row.brand_group}-${row.normalized_model}-${row.forecast_component}`} pagination={{ pageSize: 12, showSizeChanger: false }} scroll={{ x: 1050 }} size="small" /> },
       ]} />
+      <PnvwNote />
     </section>
   </div>;
 }

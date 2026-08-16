@@ -7,6 +7,7 @@ import type { ColumnsType } from "antd/es/table";
 import { divergingBarOption } from "../charts/chartOptions";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
+import { PnvwNote, PnvwValue } from "../components/PnvwValue";
 import type { GovernedForecastRecord } from "../contract";
 import { compactCurrency, exactCurrency, finite, firstNumber, formatNumber, monthLabel, wholesaleSourceLabel } from "../formatters";
 import type { BrandPayload } from "../payloads";
@@ -51,7 +52,7 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
     { title: `Change vs ${comparisonMonthLabel} Actual`, dataIndex: "change", key: "change", align: "right", render: exactCurrency },
     { title: "Change vs Original Forecast", dataIndex: "originalForecastChange", key: "originalForecastChange", align: "right", render: exactCurrency },
     { title: "Regular Wholesale", dataIndex: "wholesale", key: "wholesale", align: "right", render: (value) => formatNumber(value) },
-    { title: "Regular PNVW ($ / regular Wholesale vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: exactCurrency },
+    { title: "Regular PNVW ($ / regular Wholesale vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: (_, row) => <PnvwValue value={row.pnvw} selectedWholesale={row.wholesale} forecastComponent="regular" /> },
     { title: "Wholesale source", dataIndex: "source", key: "source", render: (value) => <Tag>{wholesaleSourceLabel(value)}</Tag> },
   ];
   const kus = rows.find((row) => row.brand === "KUS");
@@ -63,7 +64,7 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
           key={row.brand}
           label={`${row.brand} change vs ${comparisonMonthLabel} Actual`}
           value={row.change === null ? "Not available" : `${row.change >= 0 ? "+" : "−"}${compactCurrency(Math.abs(row.change))}`}
-          detail={`vs Original Forecast ${row.originalForecastChange === null ? "not available" : `${row.originalForecastChange >= 0 ? "+" : "−"}${compactCurrency(Math.abs(row.originalForecastChange))}`} · Regular PNVW ${exactCurrency(row.pnvw)}`}
+          detail={`vs Original Forecast ${row.originalForecastChange === null ? "not available" : `${row.originalForecastChange >= 0 ? "+" : "−"}${compactCurrency(Math.abs(row.originalForecastChange))}`} · Regular PNVW ${row.pnvw === null ? "N/A" : exactCurrency(row.pnvw)}`}
           tone={row.change === null ? "neutral" : row.change >= 0 ? "positive" : "negative"}
         />
       ))}
@@ -77,6 +78,6 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
           : "The approved API publishes the previous-Actual comparison only for the current month."}
       />
     <section className={styles.callout}><SafetyCertificateOutlined /><div><h3>Kia Fleet stays separate</h3><p>{kus?.fleetQuantity === null || kus?.fleetQuantity === undefined ? "Fleet quantity is not available for this period." : `${formatNumber(kus.fleetQuantity)} governed Fleet accessory units are disclosed separately.`} Regular PNVW uses regular non-Fleet Wholesale only.</p></div></section>
-    <section className={styles.tableCard}><div className={styles.sectionHeading}><div><span>API-supported performance</span><h2>Brand performance table</h2></div><Tag>No inferred causes</Tag></div><Table columns={columns} dataSource={rows} pagination={false} scroll={{ x: 850 }} size="small" /></section>
+    <section className={styles.tableCard}><div className={styles.sectionHeading}><div><span>API-supported performance</span><h2>Brand performance table</h2></div><Tag>No inferred causes</Tag></div><Table columns={columns} dataSource={rows} pagination={false} scroll={{ x: 850 }} size="small" /><PnvwNote /></section>
   </div>;
 }

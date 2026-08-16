@@ -26,6 +26,7 @@ import {
 } from "../viewModels.ts";
 import { forecastComponentLabel, plcMethodLabel } from "../formatters.ts";
 import { monthQueryValue, officialHref, resolveChoiceQuery, resolveMonthQuery } from "../officialQuery.ts";
+import { pnvwDisplayState } from "../pnvw.ts";
 
 const meta = {
   schema_version: "1.2.0",
@@ -455,4 +456,27 @@ test("PLC display labels hide raw method and component codes", () => {
   assert.equal(plcMethodLabel("selected_method"), "Selected method");
   assert.equal(forecastComponentLabel("regular"), "Regular");
   assert.equal(forecastComponentLabel("kia_fleet_cfm_adjustment"), "Kia Fleet CFM adjustment");
+});
+
+test("PNVW display distinguishes zero, unavailable, and Fleet denominators", () => {
+  assert.deepEqual(pnvwDisplayState(125, 100, "regular"), {
+    available: true,
+    secondary: null,
+    tooltip: null,
+  });
+  assert.deepEqual(pnvwDisplayState(null, 0, "regular"), {
+    available: false,
+    secondary: "Selected Wholesale = 0",
+    tooltip: "Selected regular Wholesale is 0 for this model-month, so PNVW cannot be calculated.",
+  });
+  assert.deepEqual(pnvwDisplayState(null, null, "regular"), {
+    available: false,
+    secondary: "Selected Wholesale unavailable",
+    tooltip: "No positive selected regular Wholesale is available for this model-month, so PNVW cannot be calculated.",
+  });
+  assert.deepEqual(pnvwDisplayState(null, 100, "kia_fleet_cfm_adjustment"), {
+    available: false,
+    secondary: "Fleet component",
+    tooltip: "Fleet component — Regular PNVW does not apply.",
+  });
 });

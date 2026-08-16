@@ -1,0 +1,34 @@
+.value {
+  color: #233a55;
+  font-variant-numeric: tabular-nums;
+}
+
+.unavailable {
+  display: inline-flex;
+  max-width: 180px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  color: #6b7b8f;
+  cursor: help;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.unavailable strong {
+  color: #66778b;
+  font-size: 12px;
+}
+
+.unavailable small {
+  color: #7a899a;
+  font-size: 10px;
+  white-space: normal;
+}
+
+.note {
+  margin: 12px 0 0;
+  color: #6e7e92;
+  font-size: 11px;
+  line-height: 1.5;
+}
