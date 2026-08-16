@@ -79,8 +79,48 @@ function executive(): ExecutiveSummaryEnvelope {
           normalized_model: null,
           plc: null,
           final_revenue_nowcast: 70,
+          forecast_pio_revenue_regular_nonfleet: 68,
+          kia_fleet_adjustment_revenue: 0,
+          selected_hybrid_wholesale: 12,
+          pnvw: 21.5,
           premonth_forecast: 60,
           change_from_premonth: 10,
+        }, {
+          record_type: "nowcast_brand",
+          forecast_month: "2026-04-01",
+          period_type: "nowcast",
+          forecast_component: "all_components",
+          confidence_level: "primary",
+          confidence_detail: "synthetic",
+          forecast_level: "brand",
+          brand_group: "GMA",
+          normalized_model: null,
+          plc: null,
+          final_revenue_nowcast: 20,
+          forecast_pio_revenue_regular_nonfleet: 20,
+          kia_fleet_adjustment_revenue: 0,
+          selected_hybrid_wholesale: 8,
+          pnvw: 22.5,
+          premonth_forecast: 15,
+          change_from_premonth: 5,
+        }, {
+          record_type: "nowcast_brand",
+          forecast_month: "2026-04-01",
+          period_type: "nowcast",
+          forecast_component: "all_components",
+          confidence_level: "primary",
+          confidence_detail: "synthetic",
+          forecast_level: "brand",
+          brand_group: "KUS",
+          normalized_model: null,
+          plc: null,
+          final_revenue_nowcast: 20,
+          forecast_pio_revenue_regular_nonfleet: 18,
+          kia_fleet_adjustment_revenue: 2,
+          selected_hybrid_wholesale: 6,
+          pnvw: 23.5,
+          premonth_forecast: 15,
+          change_from_premonth: 5,
         }],
       },
       next_month: {
@@ -258,12 +298,18 @@ test("brand KPI snapshots preserve API comparison values and fixed brand order",
   assert.deepEqual(snapshots.map((row) => row.changePercent), [0.1667, 0.3333, 0.3333]);
 });
 
-test("executive PNVW view keeps all published API values and supporting fields", () => {
+test("executive PNVW view shows two Actual months and the API-published current Nowcast", () => {
   const pnvw = buildExecutivePnvwHistory(executive());
   assert.equal(pnvw.length, 9);
-  assert.equal(pnvw[0].value, 10);
-  assert.equal(pnvw[0].numerator, 100);
+  assert.deepEqual([...new Set(pnvw.map((row) => row.month))], ["2026-02-01", "2026-03-01", "2026-04-01"]);
+  assert.deepEqual([...new Set(pnvw.map((row) => row.periodType))], ["actual", "nowcast"]);
+  assert.equal(pnvw[0].value, 11);
+  assert.equal(pnvw[0].numerator, 110);
   assert.equal(pnvw[0].denominator, 10);
+  const hmaNowcast = pnvw.find((row) => row.month === "2026-04-01" && row.brand === "HMA");
+  assert.equal(hmaNowcast?.value, 21.5);
+  assert.equal(hmaNowcast?.numerator, 68);
+  assert.equal(hmaNowcast?.denominator, 12);
 });
 
 test("overview movers show up to four upside and one real downside without re-ranking", () => {

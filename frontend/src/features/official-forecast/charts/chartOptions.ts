@@ -459,17 +459,19 @@ export function annualRevenueCompositionOption(data: {
   };
 }
 
-export function pnvwBarOption(points: Array<{ month: string; brand: string; value: number; numerator: number | null; denominator: number | null }>): EChartsOption {
+export function pnvwBarOption(points: Array<{ month: string; periodType: "actual" | "nowcast"; brand: string; value: number; numerator: number | null; denominator: number | null }>): EChartsOption {
   const months = [...new Set(points.map((point) => point.month))].sort();
   const brands = ["HMA", "GMA", "KUS"].filter((brand) => points.some((point) => point.brand === brand));
   const colors: Record<string, string> = { HMA: navy, GMA: blue, KUS: paleBlue };
   const tooltip = (params: unknown) => {
-    const item = params as { data?: { month?: string; brand?: string; rawValue?: number; numerator?: number | null; denominator?: number | null } };
+    const item = params as { data?: { month?: string; periodType?: "actual" | "nowcast"; brand?: string; rawValue?: number; numerator?: number | null; denominator?: number | null } };
     const datum = item.data;
     if (!datum || typeof datum.rawValue !== "number") return "";
     const numerator = datum.numerator;
     const denominator = datum.denominator;
-    return `<strong>${escapeHtml(datum.brand)} · ${escapeHtml(shortMonth(datum.month ?? ""))} Actual</strong><br/>Regular PNVW: ${exactCurrency(datum.rawValue)} / vehicle<br/>Regular PIO Revenue: ${numerator === null || numerator === undefined ? "Not available" : exactCurrency(numerator)}<br/>Regular Wholesale: ${denominator === null || denominator === undefined ? "Not available" : new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(denominator)} vehicles`;
+    const periodLabel = datum.periodType === "nowcast" ? "Nowcast" : "Actual";
+    const wholesaleLabel = datum.periodType === "nowcast" ? "Selected Regular Wholesale" : "Regular Wholesale";
+    return `<strong>${escapeHtml(datum.brand)} · ${escapeHtml(shortMonth(datum.month ?? ""))} ${periodLabel}</strong><br/>Regular PNVW: ${exactCurrency(datum.rawValue)} / vehicle<br/>Regular PIO Revenue: ${numerator === null || numerator === undefined ? "Not available" : exactCurrency(numerator)}<br/>${wholesaleLabel}: ${denominator === null || denominator === undefined ? "Not available" : new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(denominator)} vehicles`;
   };
   return {
     ...base,
@@ -478,9 +480,12 @@ export function pnvwBarOption(points: Array<{ month: string; brand: string; valu
     grid: { left: 55, right: 22, top: 35, bottom: 38 },
     xAxis: {
       type: "category",
-      data: months.map(shortMonth),
+      data: months.map((month) => {
+        const periodType = points.find((point) => point.month === month)?.periodType;
+        return `${shortMonth(month)}\n${periodType === "nowcast" ? "Nowcast" : "Actual"}`;
+      }),
       boundaryGap: true,
-      axisLabel: { color: "#65758a", fontSize: 10 },
+      axisLabel: { color: "#65758a", fontSize: 10, lineHeight: 14, interval: 0 },
       axisLine: { lineStyle: { color: "#cbd6e3" } },
     },
     yAxis: {
@@ -502,6 +507,7 @@ export function pnvwBarOption(points: Array<{ month: string; brand: string; valu
           value: point.value,
           rawValue: point.value,
           month: point.month,
+          periodType: point.periodType,
           brand: point.brand,
           numerator: point.numerator,
           denominator: point.denominator,

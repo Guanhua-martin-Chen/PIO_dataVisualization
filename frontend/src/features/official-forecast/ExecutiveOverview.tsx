@@ -234,10 +234,10 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
 
           <section className={styles.bottomGrid}>
             <OfficialChart
-              eyebrow={`${monthSpan(chartData.pnvw)} · Actual · USD / regular Wholesale vehicle`}
+              eyebrow={`${monthSpan(chartData.pnvw)} · Actual / Nowcast · USD / regular Wholesale vehicle`}
               title="Regular PNVW by Brand"
               option={chartData.pnvw.length ? pnvwBarOption(chartData.pnvw) : null}
-              summary="Regular non-Fleet Revenue per regular Wholesale vehicle."
+              summary="Latest two completed Actual months and the API-published current-month Nowcast; regular non-Fleet Revenue per regular Wholesale vehicle."
               height={190}
               compact
             />

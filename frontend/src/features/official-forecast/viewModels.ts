@@ -41,6 +41,7 @@ export type ExecutiveBrandSnapshot = {
 
 export type ExecutivePnvwPoint = {
   month: string;
+  periodType: "actual" | "nowcast";
   brand: string;
   value: number;
   numerator: number | null;
@@ -227,16 +228,43 @@ export function buildExecutiveBrandSnapshots(
 export function buildExecutivePnvwHistory(
   executive: ExecutiveSummaryEnvelope,
 ): ExecutivePnvwPoint[] {
-  return executive.data.pnvw_actual_history.records.flatMap((record: PnvwActualRecord) => {
+  const actualRecords = executive.data.pnvw_actual_history.records;
+  const actualMonths = [...new Set(actualRecords.map((record) => record.month))]
+    .sort()
+    .slice(-2);
+  const actualPoints = actualRecords.flatMap((record: PnvwActualRecord) => {
+    if (!actualMonths.includes(record.month)) return [];
     const value = finite(record.pnvw);
     return value === null ? [] : [{
       month: record.month,
+      periodType: "actual" as const,
       brand: record.brand_group,
       value,
       numerator: finite(record.numerator),
       denominator: finite(record.denominator),
     }];
   });
+  const currentMonth = executive.data.current_month.month;
+  const governedBrands = new Set(["HMA", "GMA", "KUS"]);
+  const nowcastPoints = executive.data.current_month.brand_nowcasts.flatMap((record) => {
+    const value = finite(record.pnvw);
+    if (
+      record.period_type !== "nowcast"
+      || record.forecast_month !== currentMonth
+      || !record.brand_group
+      || !governedBrands.has(record.brand_group)
+      || value === null
+    ) return [];
+    return [{
+      month: record.forecast_month,
+      periodType: "nowcast" as const,
+      brand: record.brand_group,
+      value,
+      numerator: finite(record.forecast_pio_revenue_regular_nonfleet),
+      denominator: finite(record.selected_hybrid_wholesale),
+    }];
+  });
+  return [...actualPoints, ...nowcastPoints];
 }
 
 export function selectOverviewMovers(

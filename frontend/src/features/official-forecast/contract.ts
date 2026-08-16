@@ -35,6 +35,7 @@ export type GovernedForecastRecord = {
   historical_nowcast_WAPE?: number | null;
   selected_brand_revenue_regular?: number | null;
   selected_revenue_model?: string | null;
+  selected_hybrid_wholesale?: number | null;
   pnvw?: number | null;
   revenue_forecast_source?: string | null;
 };
