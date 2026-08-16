@@ -1,6 +1,6 @@
 # Forecast API and Dashboard Integration Status
 
-Last updated: 2026-08-09
+Last updated: 2026-08-16
 
 ## Repository setup
 
@@ -104,8 +104,9 @@ it.
   axis, direct value labels, and published numerator/denominator tooltip detail;
   no annual composition is shown without a governed BP or Plan benchmark;
 - a compact title area without a duplicate BLUF block, plus an Overview
-  movement panel that preserves the API's first four upside and first real
-  downside records without website-side sorting or padding;
+  movement panel that merges the API's separately ranked direction lists into
+  the five largest published absolute Revenue changes overall, without a
+  direction quota, percentage ranking, recomputation, or padding;
 - API-backed total, brand, model, Brand + PLC, and Brand + Model + PLC views;
 - Fleet quantity displayed as a separate governed component and never added a
   second time by the website;

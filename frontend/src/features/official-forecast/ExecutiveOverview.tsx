@@ -242,7 +242,7 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
               compact
             />
             <article className={styles.moversCard}>
-              <div className={styles.sectionHeading}><div><span>API-ranked movement</span><h2>Largest Forecast Movements</h2></div></div>
+              <div className={styles.sectionHeading}><div><span>Top 5 · Brand + PLC · absolute Revenue change</span><h2>Largest Forecast Movements</h2></div></div>
               <p>{defaultMoverComparison
                 ? topMoverComparisonLabel(defaultMoverComparison.target_month, defaultMoverComparison.comparison_month, defaultMoverComparison.comparison_context)
                 : "The default API comparison was not returned."}</p>
@@ -253,7 +253,7 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
                       <span className={mover.direction === "upside" ? styles.upsideIcon : styles.downsideIcon}>
                         {mover.direction === "upside" ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
                       </span>
-                      <span><b>{mover.brand_group} · {mover.plc}</b><small>{componentLabel(mover.forecast_component)} · API rank #{mover.rank}</small></span>
+                      <span><b>{mover.brand_group} · {mover.plc}</b><small>{componentLabel(mover.forecast_component)} · {mover.direction === "upside" ? "Upside" : "Downside"} rank #{mover.rank}</small></span>
                       <strong className={styles.moverValue}>
                         <span>{signedCompactCurrency(mover.revenue_change)}</span>
                         {mover.revenue_change_pct === null ? null : <small>{signedPercent(mover.revenue_change_pct)}</small>}
@@ -262,7 +262,7 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
                   ))}
                 </ol>
               ) : <div className={styles.moversEmpty}>No ranked movement is available in this approved run.</div>}
-              <small className={styles.moversNote}>Adjacent forecast-month movement only; not a revision, alert, anomaly, or business cause.</small>
+              <small className={styles.moversNote}>Ordered by API-published absolute Revenue change; adjacent forecast months only, not a revision or business cause.</small>
               <Link href="/official-forecast/top-movers">View all movers <ArrowRightOutlined /></Link>
             </article>
           </section>

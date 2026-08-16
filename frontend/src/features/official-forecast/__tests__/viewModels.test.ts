@@ -312,8 +312,8 @@ test("executive PNVW view shows two Actual months and the API-published current 
   assert.equal(hmaNowcast?.denominator, 12);
 });
 
-test("overview movers show up to four upside and one real downside without re-ranking", () => {
-  const mover = (rank: number, direction: "upside" | "downside"): TopMover => ({
+test("overview movers merge the API lists into the five largest absolute Revenue changes", () => {
+  const mover = (rank: number, direction: "upside" | "downside", absoluteChange: number): TopMover => ({
     rank,
     direction,
     grain: "brand_plc",
@@ -325,22 +325,34 @@ test("overview movers show up to four upside and one real downside without re-ra
     comparison_month: "2026-04-01",
     target_revenue: 10,
     comparison_revenue: 5,
-    revenue_change: direction === "upside" ? 5 : -5,
-    absolute_revenue_change: 5,
+    revenue_change: direction === "upside" ? absoluteChange : -absoluteChange,
+    absolute_revenue_change: absoluteChange,
     revenue_change_pct: direction === "upside" ? 1 : -1,
     percentage_change_status: "available",
     confidence_level: "primary",
     confidence_detail: "synthetic",
   });
   const comparison = {
-    upside: [mover(1, "upside"), mover(2, "upside"), mover(3, "upside"), mover(4, "upside"), mover(5, "upside")],
-    downside: [mover(1, "downside")],
+    upside: [
+      mover(1, "upside", 774.5),
+      mover(2, "upside", 266.9),
+      mover(3, "upside", 150.2),
+      mover(4, "upside", 141.4),
+      mover(5, "upside", 80),
+    ],
+    downside: [mover(1, "downside", 163), mover(2, "downside", 50)],
   } as TopMoverComparison;
   const selected = selectOverviewMovers(comparison);
-  assert.deepEqual(selected.map((item) => `${item.direction}-${item.rank}`), ["upside-1", "upside-2", "upside-3", "upside-4", "downside-1"]);
+  assert.deepEqual(selected.map((item) => `${item.direction}-${item.rank}`), ["upside-1", "upside-2", "downside-1", "upside-3", "upside-4"]);
 
-  const shortComparison = { upside: [mover(1, "upside")], downside: [] } as unknown as TopMoverComparison;
+  const shortComparison = { upside: [mover(1, "upside", 25)], downside: [] } as unknown as TopMoverComparison;
   assert.deepEqual(selectOverviewMovers(shortComparison).map((item) => `${item.direction}-${item.rank}`), ["upside-1"]);
+
+  const downsideOnly = {
+    upside: [],
+    downside: [mover(1, "downside", 30), mover(2, "downside", 20)],
+  } as unknown as TopMoverComparison;
+  assert.deepEqual(selectOverviewMovers(downsideOnly).map((item) => `${item.direction}-${item.rank}`), ["downside-1", "downside-2"]);
 });
 
 test("forecast pages keep model rows when a same-month nowcast also exists", () => {

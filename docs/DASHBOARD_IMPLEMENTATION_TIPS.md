@@ -204,10 +204,13 @@ Keep the independent aggregate benchmark clearly separated.
 
 ## 10. Top Movers behavior
 
-Use `/api/v1/top-movers` directly. Preserve the comparison and mover order
-returned by the Forecast API; do not recalculate or sort movers in React.
-Display at most the rows returned by each `upside` and `downside` array and do
-not add zero-change rows to reach five.
+Use `/api/v1/top-movers` directly. The detailed page preserves the comparison
+and mover order returned in the separate `upside` and `downside` arrays and
+does not add zero-change rows to reach five. The Executive Overview merges the
+two already-ranked arrays and shows the five largest published
+`absolute_revenue_change` values overall, while preserving each direction's
+API order. It does not reserve direction quotas, recalculate changes, rank by
+percentage, or pad the list.
 
 Show dollar change as the ranking result and percentage change only as context.
 When comparison revenue is nonpositive, display the API's unavailable

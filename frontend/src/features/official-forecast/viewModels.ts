@@ -271,5 +271,26 @@ export function selectOverviewMovers(
   comparison: TopMoverComparison | undefined,
 ): TopMover[] {
   if (!comparison) return [];
-  return [...comparison.upside.slice(0, 4), ...comparison.downside.slice(0, 1)];
+  const selected: TopMover[] = [];
+  let upsideIndex = 0;
+  let downsideIndex = 0;
+
+  while (selected.length < 5) {
+    const upside = comparison.upside[upsideIndex];
+    const downside = comparison.downside[downsideIndex];
+    if (!upside && !downside) break;
+
+    if (
+      !downside
+      || (upside && upside.absolute_revenue_change >= downside.absolute_revenue_change)
+    ) {
+      selected.push(upside);
+      upsideIndex += 1;
+    } else {
+      selected.push(downside);
+      downsideIndex += 1;
+    }
+  }
+
+  return selected;
 }
