@@ -6,8 +6,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { ForecastRequestError, governedFetch, officialErrorContent } from "./api";
-import { pnvwBarOption } from "./charts/chartOptions";
-import { sponsorBrandRevenueTrendOption } from "./charts/brandVisuals";
+import { sponsorBrandRevenueTrendOption, sponsorPnvwBarOption } from "./charts/brandVisuals";
 import OfficialChart from "./charts/OfficialChart";
 import RunStatusBar from "./components/RunStatusBar";
 import {
@@ -237,7 +236,7 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
             <OfficialChart
               eyebrow={`${monthSpan(chartData.pnvw)} · Actual / Nowcast · USD / regular Wholesale vehicle`}
               title="Regular PNVW by Brand"
-              option={chartData.pnvw.length ? pnvwBarOption(chartData.pnvw) : null}
+              option={chartData.pnvw.length ? sponsorPnvwBarOption(chartData.pnvw) : null}
               summary="Latest two completed Actual months and the API-published current-month Nowcast; regular non-Fleet Revenue per regular Wholesale vehicle."
               height={190}
               compact
