@@ -234,7 +234,7 @@ export function sponsorBrandDonutOption(rows: Array<{ name: string; value: numbe
 export function regularWholesaleWeightOption(rows: Array<{ brand: "HMA" | "GMA" | "KUS"; wholesale: number | null }>): EChartsOption {
   const available = rows.filter((row): row is { brand: "HMA" | "GMA" | "KUS"; wholesale: number } => row.wholesale !== null);
   const total = available.reduce((sum, row) => sum + row.wholesale, 0);
-  const ordered = ["HMA", "KUS", "GMA"] as const;
+  const ordered: Array<"HMA" | "KUS" | "GMA"> = ["HMA", "KUS", "GMA"];
   return {
     ...base,
     tooltip: {
