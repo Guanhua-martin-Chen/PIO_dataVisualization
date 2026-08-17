@@ -7,7 +7,6 @@ export const BRAND_COLORS = {
 } as const;
 
 const gridColor = "#e7edf4";
-const amber = "#c58a25";
 
 function compact(value: number) {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
@@ -136,6 +135,99 @@ export function sponsorBrandRevenueTrendOption(
       })),
       ...(brandIndex === 0 ? { markArea: { silent: true, label: { show: false }, data: periodAreas } } : {}),
     })),
+  };
+}
+
+export function sponsorPnvwBarOption(points: Array<{ month: string; periodType: "actual" | "nowcast"; brand: string; value: number; numerator: number | null; denominator: number | null }>): EChartsOption {
+  const months = [...new Set(points.map((point) => point.month))].sort();
+  const brands = (["HMA", "KUS", "GMA"] as const).filter((brand) => points.some((point) => point.brand === brand));
+  return {
+    ...base,
+    tooltip: {
+      trigger: "item",
+      formatter: (params: unknown) => {
+        const item = params as { data?: { month?: string; periodType?: string; brand?: string; value?: number; numerator?: number | null; denominator?: number | null } };
+        const datum = item.data;
+        if (!datum || typeof datum.value !== "number") return "";
+        return `<strong>${escapeHtml(datum.brand)} · ${escapeHtml(shortMonth(datum.month ?? ""))} ${datum.periodType === "nowcast" ? "Nowcast" : "Actual"}</strong><br/>Regular PNVW: ${exactCurrency(datum.value)} / vehicle<br/>Regular PIO Revenue: ${datum.numerator === null || datum.numerator === undefined ? "Not available" : exactCurrency(datum.numerator)}<br/>Regular Wholesale: ${datum.denominator === null || datum.denominator === undefined ? "Not available" : new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(datum.denominator)} vehicles`;
+      },
+    },
+    legend: { top: 0, right: 4, selectedMode: false, textStyle: { color: "#65758a", fontSize: 10 }, itemWidth: 14, itemHeight: 8 },
+    grid: { left: 55, right: 22, top: 35, bottom: 38 },
+    xAxis: {
+      type: "category",
+      data: months.map((month) => {
+        const periodType = points.find((point) => point.month === month)?.periodType;
+        return `${shortMonth(month)}\n${periodType === "nowcast" ? "Nowcast" : "Actual"}`;
+      }),
+      axisLabel: { color: "#65758a", fontSize: 10, lineHeight: 14, interval: 0 },
+      axisLine: { lineStyle: { color: "#cbd6e3" } },
+    },
+    yAxis: {
+      type: "value",
+      min: 0,
+      name: "USD / vehicle",
+      nameTextStyle: { color: "#718095", fontSize: 9 },
+      axisLabel: { formatter: (value: number) => `$${compact(value)}`, color: "#65758a", fontSize: 9 },
+      splitLine: { lineStyle: { color: gridColor } },
+    },
+    series: brands.map((brand) => ({
+      name: brand,
+      type: "bar",
+      itemStyle: { color: BRAND_COLORS[brand], borderRadius: [4, 4, 0, 0] },
+      barMaxWidth: 28,
+      data: months.map((month) => {
+        const point = points.find((item) => item.month === month && item.brand === brand);
+        return point ? {
+          value: point.value,
+          month: point.month,
+          periodType: point.periodType,
+          brand: point.brand,
+          numerator: point.numerator,
+          denominator: point.denominator,
+          label: {
+            show: true,
+            position: "top",
+            distance: 4,
+            formatter: `$${Math.round(point.value)}`,
+            color: "#334860",
+            fontSize: 9,
+            fontWeight: 700,
+          },
+        } : null;
+      }),
+    })),
+  };
+}
+
+export function sponsorBrandDonutOption(rows: Array<{ name: string; value: number }>): EChartsOption {
+  return {
+    ...base,
+    tooltip: { trigger: "item", valueFormatter: (value: unknown) => typeof value === "number" ? currency(value) : String(value ?? "") },
+    legend: { bottom: 0, textStyle: { color: "#65758a" } },
+    color: [BRAND_COLORS.HMA, BRAND_COLORS.KUS, BRAND_COLORS.GMA],
+    series: [{
+      type: "pie",
+      radius: ["46%", "68%"],
+      center: ["50%", "43%"],
+      avoidLabelOverlap: true,
+      label: {
+        formatter: (params: { name?: string; value?: unknown; percent?: number }) => {
+          const value = typeof params.value === "number" ? currency(params.value) : "";
+          const percent = typeof params.percent === "number" ? `${params.percent.toFixed(1)}%` : "";
+          return `${params.name ?? ""}\n${value}${value && percent ? " · " : ""}${percent}`;
+        },
+        color: "#334860",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: 650,
+      },
+      labelLine: { length: 10, length2: 8 },
+      data: (["HMA", "KUS", "GMA"] as const).flatMap((brand) => {
+        const row = rows.find((item) => item.name === brand);
+        return row ? [{ ...row, itemStyle: { color: BRAND_COLORS[brand] } }] : [];
+      }),
+    }],
   };
 }
 
