@@ -1,9 +1,9 @@
 import type { EChartsOption } from "echarts";
 
 export const BRAND_COLORS = {
-  HMA: "#2F5FA7",
-  KUS: "#9B4F68",
-  GMA: "#5F6B7A",
+  HMA: "#275694",
+  KUS: "#8E455E",
+  GMA: "#55616F",
 } as const;
 
 export const FLEET_COLOR = "#C58A25";
