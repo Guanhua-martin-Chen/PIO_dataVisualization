@@ -1,12 +1,12 @@
 import type { EChartsOption } from "echarts";
 
 export const BRAND_COLORS = {
-  HMA: "#4778B8",
-  KUS: "#B0667D",
-  GMA: "#7D8795",
+  HMA: "#2F5FA7",
+  KUS: "#9B4F68",
+  GMA: "#5F6B7A",
 } as const;
 
-export const FLEET_COLOR = "#D1A046";
+export const FLEET_COLOR = "#C58A25";
 
 const gridColor = "#e7edf4";
 
@@ -87,15 +87,15 @@ export function sponsorBrandRevenueTrendOption(
   };
   const periodAreas: any[] = [
     ...(nowcastIndex > 0 ? [[
-      { xAxis: labels[0], itemStyle: { color: "rgba(71,120,184,0.012)" } },
+      { xAxis: labels[0], itemStyle: { color: "rgba(47,95,167,0.012)" } },
       { xAxis: labels[nowcastIndex - 1] },
     ]] : []),
     ...(nowcastIndex >= 0 ? [[
-      { xAxis: labels[nowcastIndex], itemStyle: { color: "rgba(209,160,70,0.055)" } },
+      { xAxis: labels[nowcastIndex], itemStyle: { color: "rgba(197,138,37,0.055)" } },
       { xAxis: labels[nowcastIndex] },
     ]] : []),
     ...(forecastIndex >= 0 ? [[
-      { xAxis: labels[forecastIndex], itemStyle: { color: "rgba(71,120,184,0.025)" } },
+      { xAxis: labels[forecastIndex], itemStyle: { color: "rgba(47,95,167,0.025)" } },
       { xAxis: labels[labels.length - 1] },
     ]] : []),
   ];
@@ -122,7 +122,7 @@ export function sponsorBrandRevenueTrendOption(
       type: "bar" as const,
       stack: "brandRevenue",
       z: 2,
-      barMaxWidth: 38,
+      barMaxWidth: 42,
       itemStyle: {
         color: BRAND_COLORS[brand],
         borderRadius: brand === "GMA" ? [4, 4, 0, 0] : 0,
@@ -183,7 +183,7 @@ export function sponsorPnvwBarOption(points: Array<{ month: string; periodType: 
       name: brand,
       type: "bar",
       itemStyle: { color: BRAND_COLORS[brand], borderRadius: [4, 4, 0, 0] },
-      barMaxWidth: 26,
+      barMaxWidth: 28,
       data: months.map((month) => {
         const point = points.find((item) => item.month === month && item.brand === brand);
         return point ? {
@@ -259,7 +259,7 @@ export function regularWholesaleWeightOption(rows: Array<{ brand: Brand; wholesa
     yAxis: { type: "category", data: displayOrder, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
     series: [{
       type: "bar",
-      barMaxWidth: 24,
+      barMaxWidth: 26,
       data: displayOrder.map((brand) => {
         const row = rows.find((item) => item.brand === brand);
         const value = row?.wholesale ?? 0;
@@ -302,7 +302,7 @@ export function sponsorBrandMovementOption(rows: Array<{ brand: Brand; value: nu
     yAxis: { type: "category", data: displayOrder, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
     series: [{
       type: "bar",
-      barMaxWidth: 24,
+      barMaxWidth: 26,
       data: displayOrder.map((brand) => {
         const value = rows.find((row) => row.brand === brand)?.value ?? 0;
         return {
