@@ -2,7 +2,7 @@
 
 import { Table, Tabs, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { chartColors, stackedBarOption } from "../charts/chartOptions";
+import { sponsorQuantityDecompositionOption } from "../charts/brandVisuals";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import PeriodBadge from "../components/PeriodBadge";
@@ -18,6 +18,15 @@ export default function QuantityView({ payload, month, onMonthChange }: { payloa
   const total = rows.find((row) => row.record_type === "forecast_total");
   const brands = rows.filter((row) => row.record_type === "forecast_brand");
   const models = rows.filter((row) => row.record_type === "forecast_model");
+  const brandOrder = ["HMA", "KUS", "GMA"] as const;
+  const brandQuantityRows = brandOrder.map((brand) => {
+    const row = brands.find((item) => item.brand_group === brand);
+    return {
+      brand,
+      regular: finite(row?.forecast_pio_quantity_regular_nonfleet),
+      fleet: finite(row?.kia_fleet_adjustment_quantity),
+    };
+  });
   const brandColumns: ColumnsType<GovernedQuantityRecord> = [
     { title: "Brand", dataIndex: "brand_group", key: "brand", render: (value) => <strong>{formatText(value)}</strong> },
     { title: "Period", dataIndex: "period_type", key: "period", render: (value) => <PeriodBadge value={value} /> },
@@ -44,7 +53,12 @@ export default function QuantityView({ payload, month, onMonthChange }: { payloa
       <MetricCard label="Regular non-Fleet units" value={formatNumber(total?.forecast_pio_quantity_regular_nonfleet, true)} detail="Regular component" />
       <MetricCard label="Kia Fleet units" value={formatNumber(total?.kia_fleet_adjustment_quantity, true)} detail="Separate component, added once" />
     </div>
-    <OfficialChart eyebrow={`${monthLabel(month)} / accessory units / ${total?.period_type ?? "period not provided"}`} title="Regular and Kia Fleet decomposition" option={brands.length ? stackedBarOption(brands.map((row) => row.brand_group ?? "Unknown"), [{ name: "Regular non-Fleet", values: brands.map((row) => finite(row.forecast_pio_quantity_regular_nonfleet)), color: chartColors.navy }, { name: "Kia Fleet", values: brands.map((row) => finite(row.kia_fleet_adjustment_quantity)), color: chartColors.amber }], "accessory units") : null} summary="Quantity and units per vehicle are counts or ratios, never percentages. Kia Fleet is shown as its own KUS component." />
+    <OfficialChart
+      eyebrow={`${monthLabel(month)} / accessory units / ${total?.period_type ?? "period not provided"}`}
+      title="Accessory Units by Brand and Kia Fleet"
+      option={brands.length ? sponsorQuantityDecompositionOption(brandQuantityRows) : null}
+      summary="Regular units use the same HMA, KUS, and GMA colors as the rest of the dashboard. Kia Fleet remains a separate gold cap on KUS only."
+    />
     <section className={styles.tableCard}>
       <div className={styles.sectionHeading}><div><span>Approved API records</span><h2>Quantity detail</h2></div><Tag>{brands.length + models.length} rows</Tag></div>
       <Tabs items={[
