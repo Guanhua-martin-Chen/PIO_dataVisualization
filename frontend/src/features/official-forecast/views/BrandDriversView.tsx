@@ -4,7 +4,7 @@ import { SafetyCertificateOutlined } from "@ant-design/icons";
 import { Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
-import { divergingBarOption } from "../charts/chartOptions";
+import { regularWholesaleWeightOption, sponsorBrandMovementOption } from "../charts/brandVisuals";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import { PnvwNote, PnvwValue } from "../components/PnvwValue";
@@ -26,7 +26,7 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
   const forecastRows = payload.revenue.data.filter((row) => row.forecast_month === month && row.record_type === "forecast_brand");
   const wholesaleRows = payload.wholesale.data.filter((row) => row.forecast_month === month && row.record_type === "forecast_brand");
   const quantityRows = payload.quantity.data.filter((row) => row.forecast_month === month && row.record_type === "forecast_brand");
-  const rows = ["HMA", "GMA", "KUS"].map((brand) => {
+  const rows = (["HMA", "KUS", "GMA"] as const).map((brand) => {
     const revenue = revenueRows.find((row) => row.brand_group === brand);
     const forecast = forecastRows.find((row) => row.brand_group === brand);
     const wholesale = wholesaleRows.find((row) => row.brand_group === brand);
@@ -46,38 +46,54 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
       fleetQuantity: finite(quantity?.kia_fleet_adjustment_quantity),
     };
   });
-  const chartRows = rows.flatMap((row) => row.change === null ? [] : [{ name: row.brand, value: row.change }]);
-  const columns: ColumnsType<(typeof rows)[number]> = [
+  const totalWholesale = rows.every((row) => row.wholesale !== null)
+    ? rows.reduce((sum, row) => sum + (row.wholesale ?? 0), 0)
+    : null;
+  const rowsWithShare = rows.map((row) => ({
+    ...row,
+    volumeShare: row.wholesale !== null && totalWholesale && totalWholesale > 0 ? row.wholesale / totalWholesale : null,
+  }));
+  const chartRows = rowsWithShare.flatMap((row) => row.change === null ? [] : [{ brand: row.brand, value: row.change }]);
+  const columns: ColumnsType<(typeof rowsWithShare)[number]> = [
     { title: "Brand", dataIndex: "brand", key: "brand", render: (value) => <strong>{value}</strong> },
     { title: `Change vs ${comparisonMonthLabel} Actual`, dataIndex: "change", key: "change", align: "right", render: exactCurrency },
     { title: "Change vs Original Forecast", dataIndex: "originalForecastChange", key: "originalForecastChange", align: "right", render: exactCurrency },
     { title: "Regular Wholesale", dataIndex: "wholesale", key: "wholesale", align: "right", render: (value) => formatNumber(value) },
+    { title: "Volume Share", dataIndex: "volumeShare", key: "volumeShare", align: "right", render: (value) => value === null ? "N/A" : `${(value * 100).toFixed(1)}%` },
     { title: "Regular PNVW ($ / regular Wholesale vehicle)", dataIndex: "pnvw", key: "pnvw", align: "right", render: (_, row) => <PnvwValue value={row.pnvw} selectedWholesale={row.wholesale} forecastComponent="regular" /> },
     { title: "Wholesale source", dataIndex: "source", key: "source", render: (value) => <Tag>{wholesaleSourceLabel(value)}</Tag> },
   ];
-  const kus = rows.find((row) => row.brand === "KUS");
+  const kus = rowsWithShare.find((row) => row.brand === "KUS");
   return <div className={styles.stack}>
     <div className={styles.controls}><label className={styles.controlField}><span>Forecast Month</span><MonthControl months={months} value={month} onChange={onMonthChange} /></label></div>
     <div className={styles.metricGrid}>
-      {rows.map((row) => (
+      {rowsWithShare.map((row) => (
         <MetricCard
           key={row.brand}
           label={`${row.brand} change vs ${comparisonMonthLabel} Actual`}
           value={row.change === null ? "Not available" : `${row.change >= 0 ? "+" : "−"}${compactCurrency(Math.abs(row.change))}`}
-          detail={`vs Original Forecast ${row.originalForecastChange === null ? "not available" : `${row.originalForecastChange >= 0 ? "+" : "−"}${compactCurrency(Math.abs(row.originalForecastChange))}`} · Regular PNVW ${row.pnvw === null ? "N/A" : exactCurrency(row.pnvw)}`}
+          detail={`Regular Wholesale ${formatNumber(row.wholesale)} · Volume Share ${row.volumeShare === null ? "N/A" : `${(row.volumeShare * 100).toFixed(1)}%`} · PNVW ${row.pnvw === null ? "N/A" : exactCurrency(row.pnvw)}`}
           tone={row.change === null ? "neutral" : row.change >= 0 ? "positive" : "negative"}
         />
       ))}
     </div>
-    <OfficialChart
+    <div className={styles.chartGrid}>
+      <OfficialChart
+        eyebrow={`${monthLabel(month)} · regular non-Fleet Wholesale`}
+        title="Brand Weight by Regular Wholesale Volume"
+        option={rowsWithShare.some((row) => row.wholesale !== null) ? regularWholesaleWeightOption(rowsWithShare) : null}
+        summary="Bar length shows the selected regular Wholesale vehicle volume; the label also shows each brand's share of the three-brand regular Wholesale base."
+      />
+      <OfficialChart
         eyebrow={`${monthLabel(month)} Nowcast vs ${comparisonMonthLabel} Actual · USD`}
         title={`Brand movement versus ${comparisonMonthLabel} Actual`}
-        option={chartRows.length ? divergingBarOption(chartRows) : null}
+        option={chartRows.length ? sponsorBrandMovementOption(chartRows) : null}
         summary={hasActualComparison
-          ? "Changes come directly from the API-published current-Nowcast versus previous-Actual comparison; no business cause is inferred."
+          ? "Changes come directly from the API-published current-Nowcast versus previous-Actual comparison; brand colors remain consistent across the dashboard."
           : "The approved API publishes the previous-Actual comparison only for the current month."}
       />
+    </div>
     <section className={styles.callout}><SafetyCertificateOutlined /><div><h3>Kia Fleet stays separate</h3><p>{kus?.fleetQuantity === null || kus?.fleetQuantity === undefined ? "Fleet quantity is not available for this period." : `${formatNumber(kus.fleetQuantity)} governed Fleet accessory units are disclosed separately.`} Regular PNVW uses regular non-Fleet Wholesale only.</p></div></section>
-    <section className={styles.tableCard}><div className={styles.sectionHeading}><div><span>API-supported performance</span><h2>Brand performance table</h2></div><Tag>No inferred causes</Tag></div><Table columns={columns} dataSource={rows} pagination={false} scroll={{ x: 850 }} size="small" /><PnvwNote /></section>
+    <section className={styles.tableCard}><div className={styles.sectionHeading}><div><span>API-supported performance</span><h2>Brand performance table</h2></div><Tag>No inferred causes</Tag></div><Table columns={columns} dataSource={rowsWithShare} pagination={false} scroll={{ x: 980 }} size="small" /><PnvwNote /></section>
   </div>;
 }

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { ForecastRequestError, governedFetch, officialErrorContent } from "./api";
-import { brandRevenueTrendOption, pnvwBarOption } from "./charts/chartOptions";
+import { sponsorBrandRevenueTrendOption, sponsorPnvwBarOption } from "./charts/brandVisuals";
 import OfficialChart from "./charts/OfficialChart";
 import RunStatusBar from "./components/RunStatusBar";
 import {
@@ -221,12 +221,12 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
           <section className={styles.primaryChart}>
             <OfficialChart
               eyebrow={`${monthSpan(chartData.trend)} · USD · Actual / Nowcast / Forecast`}
-              title="Monthly PIO Revenue by Brand and Total"
-              option={chartData.trend.length ? brandRevenueTrendOption(
+              title="Monthly PIO Revenue by Brand"
+              option={chartData.trend.length ? sponsorBrandRevenueTrendOption(
                 chartData.trend,
                 governedRange.available ? { month: payload.view.currentMonth, low: governedRange.low, high: governedRange.high } : undefined,
               ) : null}
-              summary="Brand Revenue bars and the API-published Official Total share one USD axis."
+              summary="Each monthly bar is stacked by HMA, KUS, and GMA; the label above the stack is the API-published Official Total."
               height={310}
               compact
             />
@@ -236,7 +236,7 @@ export default function ExecutiveOverview({ query = {} }: { query?: OfficialQuer
             <OfficialChart
               eyebrow={`${monthSpan(chartData.pnvw)} · Actual / Nowcast · USD / regular Wholesale vehicle`}
               title="Regular PNVW by Brand"
-              option={chartData.pnvw.length ? pnvwBarOption(chartData.pnvw) : null}
+              option={chartData.pnvw.length ? sponsorPnvwBarOption(chartData.pnvw) : null}
               summary="Latest two completed Actual months and the API-published current-month Nowcast; regular non-Fleet Revenue per regular Wholesale vehicle."
               height={190}
               compact

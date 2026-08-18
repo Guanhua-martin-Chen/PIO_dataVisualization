@@ -16,7 +16,7 @@ const officialLinks: Array<{ href: string; label: string; sections: string[] }> 
   },
   {
     href: "/official-forecast/brands",
-    label: "Drivers & PLC",
+    label: "Performance & Drivers",
     sections: ["brands", "wholesale", "plc", "top-movers"],
   },
   {

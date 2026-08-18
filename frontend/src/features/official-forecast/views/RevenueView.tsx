@@ -2,7 +2,8 @@
 
 import { Table, Tabs, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { donutOption, revenueTrendOption } from "../charts/chartOptions";
+import { revenueTrendOption } from "../charts/chartOptions";
+import { sponsorBrandDonutOption } from "../charts/brandVisuals";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import PeriodBadge from "../components/PeriodBadge";
@@ -54,7 +55,7 @@ export default function RevenueView({ payload, month, onMonthChange }: { payload
     </div>
     <div className={styles.chartGrid}>
       <OfficialChart eyebrow="Six months / USD / H1-H3 Primary, H4-H6 Exploratory" title="Official revenue outlook" option={trend.length ? revenueTrendOption(trend) : null} summary="The current point uses the approved nowcast. Future monthly intervals are not published by this approved run, so no band is fabricated." />
-      <OfficialChart eyebrow={`${monthLabel(month)} / USD / ${total?.period_type ?? "period not provided"}`} title="Brand contribution" option={brands.length ? donutOption(brands.flatMap((row) => { const value = revenueValue(row); return row.brand_group && value !== null ? [{ name: row.brand_group, value }] : []; })) : null} summary="HMA, GMA, and KUS contributions reconcile to the governed total. Kia Fleet remains inside KUS only once." />
+      <OfficialChart eyebrow={`${monthLabel(month)} / USD / ${total?.period_type ?? "period not provided"}`} title="Brand contribution" option={brands.length ? sponsorBrandDonutOption(brands.flatMap((row) => { const value = revenueValue(row); return row.brand_group && value !== null ? [{ name: row.brand_group, value }] : []; })) : null} summary="HMA, KUS, and GMA use the same brand-specific colors as the Executive Overview. Kia Fleet remains inside KUS only once." />
     </div>
     <section className={styles.tableCard}>
       <div className={styles.sectionHeading}><div><span>Approved API records</span><h2>Revenue detail</h2></div><Tag>{brands.length + models.length} rows</Tag></div>
