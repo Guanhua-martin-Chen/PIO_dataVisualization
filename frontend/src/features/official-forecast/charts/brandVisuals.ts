@@ -6,7 +6,11 @@ export const BRAND_COLORS = {
   GMA: "#4B5563",
 } as const;
 
+export const FLEET_COLOR = "#C58A25";
+
 const gridColor = "#e7edf4";
+
+type Brand = keyof typeof BRAND_COLORS;
 
 function compact(value: number) {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
@@ -24,6 +28,10 @@ function exactCurrency(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function signedCurrency(value: number) {
+  return `${value >= 0 ? "+" : "−"}${currency(Math.abs(value))}`;
 }
 
 function shortMonth(value: string) {
@@ -231,10 +239,11 @@ export function sponsorBrandDonutOption(rows: Array<{ name: string; value: numbe
   };
 }
 
-export function regularWholesaleWeightOption(rows: Array<{ brand: "HMA" | "GMA" | "KUS"; wholesale: number | null }>): EChartsOption {
-  const available = rows.filter((row): row is { brand: "HMA" | "GMA" | "KUS"; wholesale: number } => row.wholesale !== null);
+export function regularWholesaleWeightOption(rows: Array<{ brand: Brand; wholesale: number | null }>): EChartsOption {
+  const available = rows.filter((row): row is { brand: Brand; wholesale: number } => row.wholesale !== null);
   const total = available.reduce((sum, row) => sum + row.wholesale, 0);
-  const ordered: Array<"HMA" | "KUS" | "GMA"> = ["HMA", "KUS", "GMA"];
+  // ECharts renders category data bottom-to-top, so reverse the desired visual order.
+  const displayOrder: Brand[] = ["GMA", "KUS", "HMA"];
   return {
     ...base,
     tooltip: {
@@ -248,11 +257,11 @@ export function regularWholesaleWeightOption(rows: Array<{ brand: "HMA" | "GMA" 
     },
     grid: { left: 78, right: 82, top: 18, bottom: 28 },
     xAxis: { type: "value", axisLabel: { formatter: compact, color: "#65758a" }, splitLine: { lineStyle: { color: gridColor } } },
-    yAxis: { type: "category", data: ordered, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
+    yAxis: { type: "category", data: displayOrder, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
     series: [{
       type: "bar",
       barMaxWidth: 28,
-      data: ordered.map((brand) => {
+      data: displayOrder.map((brand) => {
         const row = rows.find((item) => item.brand === brand);
         const value = row?.wholesale ?? 0;
         const share = total > 0 ? value / total : 0;
@@ -273,5 +282,126 @@ export function regularWholesaleWeightOption(rows: Array<{ brand: "HMA" | "GMA" 
         };
       }),
     }],
+  };
+}
+
+export function sponsorBrandMovementOption(rows: Array<{ brand: Brand; value: number }>): EChartsOption {
+  const displayOrder: Brand[] = ["GMA", "KUS", "HMA"];
+  return {
+    ...base,
+    tooltip: {
+      trigger: "item",
+      formatter: (params: unknown) => {
+        const item = params as { data?: { brand?: string; value?: number } };
+        const datum = item.data;
+        if (!datum || typeof datum.value !== "number") return "";
+        return `<strong>${escapeHtml(datum.brand)}</strong><br/>Revenue change: ${exactCurrency(datum.value)}`;
+      },
+    },
+    grid: { left: 88, right: 88, top: 18, bottom: 32 },
+    xAxis: { type: "value", axisLabel: { formatter: currency, color: "#65758a" }, splitLine: { lineStyle: { color: gridColor } } },
+    yAxis: { type: "category", data: displayOrder, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
+    series: [{
+      type: "bar",
+      barMaxWidth: 28,
+      data: displayOrder.map((brand) => {
+        const value = rows.find((row) => row.brand === brand)?.value ?? 0;
+        return {
+          brand,
+          value,
+          itemStyle: {
+            color: BRAND_COLORS[brand],
+            borderRadius: value >= 0 ? [0, 5, 5, 0] : [5, 0, 0, 5],
+          },
+          label: {
+            show: true,
+            position: value >= 0 ? "right" : "left",
+            distance: 7,
+            formatter: signedCurrency(value),
+            color: "#334860",
+            fontSize: 10,
+            fontWeight: 700,
+          },
+        };
+      }),
+    }],
+  };
+}
+
+export function sponsorQuantityDecompositionOption(rows: Array<{
+  brand: Brand;
+  regular: number | null;
+  fleet: number | null;
+}>): EChartsOption {
+  const brandOrder: Brand[] = ["HMA", "KUS", "GMA"];
+  const regularSeries = brandOrder.map((brand) => ({
+    name: brand,
+    type: "bar" as const,
+    stack: "quantity",
+    barMaxWidth: 48,
+    itemStyle: { color: BRAND_COLORS[brand] },
+    data: brandOrder.map((category) => {
+      if (category !== brand) return null;
+      const value = rows.find((row) => row.brand === brand)?.regular ?? null;
+      return value === null ? null : {
+        value,
+        label: {
+          show: true,
+          position: "inside" as const,
+          formatter: compact(value),
+          color: "#fff",
+          fontSize: 9,
+          fontWeight: 700,
+        },
+      };
+    }),
+  }));
+  const fleetSeries = {
+    name: "Kia Fleet",
+    type: "bar" as const,
+    stack: "quantity",
+    barMaxWidth: 48,
+    itemStyle: { color: FLEET_COLOR, borderRadius: [4, 4, 0, 0] },
+    data: brandOrder.map((brand) => {
+      const value = brand === "KUS" ? rows.find((row) => row.brand === brand)?.fleet ?? null : null;
+      return value === null || value === 0 ? null : {
+        value,
+        label: {
+          show: true,
+          position: "inside" as const,
+          formatter: compact(value),
+          color: "#fff",
+          fontSize: 9,
+          fontWeight: 700,
+        },
+      };
+    }),
+  };
+
+  return {
+    ...base,
+    legend: {
+      data: ["HMA", "KUS", "GMA", "Kia Fleet"],
+      bottom: 0,
+      selectedMode: false,
+      textStyle: { color: "#65758a", fontSize: 10 },
+      itemWidth: 14,
+      itemHeight: 8,
+    },
+    grid: { left: 68, right: 28, top: 28, bottom: 58 },
+    xAxis: {
+      type: "category",
+      data: brandOrder,
+      axisLabel: { color: "#52647a", fontWeight: 700 },
+      axisLine: { lineStyle: { color: "#cbd6e3" } },
+    },
+    yAxis: {
+      type: "value",
+      name: "accessory units",
+      nameTextStyle: { color: "#718095", fontSize: 9 },
+      axisLabel: { formatter: compact, color: "#65758a" },
+      splitLine: { lineStyle: { color: gridColor } },
+    },
+    series: [...regularSeries, fleetSeries],
   };
 }
