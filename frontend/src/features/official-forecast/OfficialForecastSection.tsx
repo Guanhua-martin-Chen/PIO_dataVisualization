@@ -29,7 +29,7 @@ const PLC_LEVELS = ["brand-plc", "model-plc"] as const;
 
 type SectionPayload = BrandPayload | GovernancePayload | OutputPayload | RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope | PlcEnvelope | TopMoversEnvelope;
 const copy: Record<OfficialSection, { eyebrow: string; title: string; description: string }> = {
-  brands: { eyebrow: "Approved brand view", title: "Brand Performance", description: "Revenue movement, regular PNVW, and separately disclosed Kia Fleet components." },
+  brands: { eyebrow: "Approved brand view", title: "Brand Performance", description: "Revenue movement, regular Wholesale scale, PNVW, and separately disclosed Kia Fleet components." },
   revenue: { eyebrow: "Approved forecast", title: "Revenue", description: "Official total, brand, and model revenue from one immutable approved run." },
   quantity: { eyebrow: "Approved forecast", title: "Quantity", description: "Accessory units, units per vehicle, and the separate Kia Fleet component." },
   wholesale: { eyebrow: "Governed input", title: "Wholesale Inputs", description: "Selected regular Wholesale is built model by model: Sponsor Plan where available, Internal Forecast only where missing." },
