@@ -4,14 +4,14 @@ import { SafetyCertificateOutlined } from "@ant-design/icons";
 import { Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
-import { regularWholesaleWeightOption, sponsorBrandMovementOption } from "../charts/brandVisuals";
+import { regularWholesaleWeightOption, sponsorPnvwBarOption } from "../charts/brandVisuals";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import { PnvwNote, PnvwValue } from "../components/PnvwValue";
 import type { GovernedForecastRecord } from "../contract";
 import { compactCurrency, exactCurrency, finite, firstNumber, formatNumber, monthLabel, wholesaleSourceLabel } from "../formatters";
 import type { BrandPayload } from "../payloads";
-import { landingRevenueRows, revenueValue, uniqueMonths } from "../viewModels";
+import { buildExecutivePnvwHistory, landingRevenueRows, revenueValue, uniqueMonths } from "../viewModels";
 import { MonthControl } from "./controls";
 import styles from "./OfficialViews.module.css";
 
@@ -53,7 +53,7 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
     ...row,
     volumeShare: row.wholesale !== null && totalWholesale && totalWholesale > 0 ? row.wholesale / totalWholesale : null,
   }));
-  const chartRows = rowsWithShare.flatMap((row) => row.change === null ? [] : [{ brand: row.brand, value: row.change }]);
+  const pnvwHistory = buildExecutivePnvwHistory(payload.executive);
   const columns: ColumnsType<(typeof rowsWithShare)[number]> = [
     { title: "Brand", dataIndex: "brand", key: "brand", render: (value) => <strong>{value}</strong> },
     { title: `Change vs ${comparisonMonthLabel} Actual`, dataIndex: "change", key: "change", align: "right", render: exactCurrency },
@@ -79,18 +79,16 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
     </div>
     <div className={styles.chartGrid}>
       <OfficialChart
-        eyebrow={`${monthLabel(month)} · regular non-Fleet Wholesale`}
+        eyebrow={`${monthLabel(month)} · selected full-month regular non-Fleet Wholesale`}
         title="Brand Weight by Regular Wholesale Volume"
         option={rowsWithShare.some((row) => row.wholesale !== null) ? regularWholesaleWeightOption(rowsWithShare) : null}
-        summary="Bar length shows the selected regular Wholesale vehicle volume; the label also shows each brand's share of the three-brand regular Wholesale base."
+        summary="Full-month regular non-Fleet Wholesale input; Sponsor Plan is used where available, with governed fallback otherwise. Labels show each brand's share of the three-brand selected Wholesale base."
       />
       <OfficialChart
-        eyebrow={`${monthLabel(month)} Nowcast vs ${comparisonMonthLabel} Actual · USD`}
-        title={`Brand movement versus ${comparisonMonthLabel} Actual`}
-        option={chartRows.length ? sponsorBrandMovementOption(chartRows) : null}
-        summary={hasActualComparison
-          ? "Changes come directly from the API-published current-Nowcast versus previous-Actual comparison; brand colors remain consistent across the dashboard."
-          : "The approved API publishes the previous-Actual comparison only for the current month."}
+        eyebrow="Latest completed Actuals + current-month Nowcast · USD / regular Wholesale vehicle"
+        title="Regular PNVW by Brand"
+        option={pnvwHistory.length ? sponsorPnvwBarOption(pnvwHistory) : null}
+        summary="Regular PNVW pairs regular non-Fleet PIO Revenue with the corresponding regular Wholesale denominator; the current month uses the API-published brand Nowcast and selected full-month Wholesale input."
       />
     </div>
     <section className={styles.callout}><SafetyCertificateOutlined /><div><h3>Kia Fleet stays separate</h3><p>{kus?.fleetQuantity === null || kus?.fleetQuantity === undefined ? "Fleet quantity is not available for this period." : `${formatNumber(kus.fleetQuantity)} governed Fleet accessory units are disclosed separately.`} Regular PNVW uses regular non-Fleet Wholesale only.</p></div></section>
