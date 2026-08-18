@@ -4,8 +4,7 @@ import { SafetyCertificateOutlined } from "@ant-design/icons";
 import { Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
-import { divergingBarOption } from "../charts/chartOptions";
-import { regularWholesaleWeightOption } from "../charts/brandVisuals";
+import { regularWholesaleWeightOption, sponsorBrandMovementOption } from "../charts/brandVisuals";
 import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import { PnvwNote, PnvwValue } from "../components/PnvwValue";
@@ -27,7 +26,7 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
   const forecastRows = payload.revenue.data.filter((row) => row.forecast_month === month && row.record_type === "forecast_brand");
   const wholesaleRows = payload.wholesale.data.filter((row) => row.forecast_month === month && row.record_type === "forecast_brand");
   const quantityRows = payload.quantity.data.filter((row) => row.forecast_month === month && row.record_type === "forecast_brand");
-  const rows = (["HMA", "GMA", "KUS"] as const).map((brand) => {
+  const rows = (["HMA", "KUS", "GMA"] as const).map((brand) => {
     const revenue = revenueRows.find((row) => row.brand_group === brand);
     const forecast = forecastRows.find((row) => row.brand_group === brand);
     const wholesale = wholesaleRows.find((row) => row.brand_group === brand);
@@ -54,7 +53,7 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
     ...row,
     volumeShare: row.wholesale !== null && totalWholesale && totalWholesale > 0 ? row.wholesale / totalWholesale : null,
   }));
-  const chartRows = rowsWithShare.flatMap((row) => row.change === null ? [] : [{ name: row.brand, value: row.change }]);
+  const chartRows = rowsWithShare.flatMap((row) => row.change === null ? [] : [{ brand: row.brand, value: row.change }]);
   const columns: ColumnsType<(typeof rowsWithShare)[number]> = [
     { title: "Brand", dataIndex: "brand", key: "brand", render: (value) => <strong>{value}</strong> },
     { title: `Change vs ${comparisonMonthLabel} Actual`, dataIndex: "change", key: "change", align: "right", render: exactCurrency },
@@ -88,9 +87,9 @@ export default function BrandDriversView({ payload, month, onMonthChange }: { pa
       <OfficialChart
         eyebrow={`${monthLabel(month)} Nowcast vs ${comparisonMonthLabel} Actual · USD`}
         title={`Brand movement versus ${comparisonMonthLabel} Actual`}
-        option={chartRows.length ? divergingBarOption(chartRows) : null}
+        option={chartRows.length ? sponsorBrandMovementOption(chartRows) : null}
         summary={hasActualComparison
-          ? "Changes come directly from the API-published current-Nowcast versus previous-Actual comparison; no business cause is inferred."
+          ? "Changes come directly from the API-published current-Nowcast versus previous-Actual comparison; brand colors remain consistent across the dashboard."
           : "The approved API publishes the previous-Actual comparison only for the current month."}
       />
     </div>
