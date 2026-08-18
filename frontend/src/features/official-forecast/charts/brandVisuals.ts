@@ -1,12 +1,12 @@
 import type { EChartsOption } from "echarts";
 
 export const BRAND_COLORS = {
-  HMA: "#275694",
-  KUS: "#8E455E",
-  GMA: "#55616F",
+  HMA: "#0057B8",
+  KUS: "#D33F49",
+  GMA: "#495464",
 } as const;
 
-export const FLEET_COLOR = "#C58A25";
+export const FLEET_COLOR = "#D79A24";
 
 const gridColor = "#e7edf4";
 
@@ -87,15 +87,15 @@ export function sponsorBrandRevenueTrendOption(
   };
   const periodAreas: any[] = [
     ...(nowcastIndex > 0 ? [[
-      { xAxis: labels[0], itemStyle: { color: "rgba(47,95,167,0.012)" } },
+      { xAxis: labels[0], itemStyle: { color: "rgba(0,87,184,0.012)" } },
       { xAxis: labels[nowcastIndex - 1] },
     ]] : []),
     ...(nowcastIndex >= 0 ? [[
-      { xAxis: labels[nowcastIndex], itemStyle: { color: "rgba(197,138,37,0.055)" } },
+      { xAxis: labels[nowcastIndex], itemStyle: { color: "rgba(215,154,36,0.055)" } },
       { xAxis: labels[nowcastIndex] },
     ]] : []),
     ...(forecastIndex >= 0 ? [[
-      { xAxis: labels[forecastIndex], itemStyle: { color: "rgba(47,95,167,0.025)" } },
+      { xAxis: labels[forecastIndex], itemStyle: { color: "rgba(0,87,184,0.025)" } },
       { xAxis: labels[labels.length - 1] },
     ]] : []),
   ];
@@ -125,6 +125,8 @@ export function sponsorBrandRevenueTrendOption(
       barMaxWidth: 42,
       itemStyle: {
         color: BRAND_COLORS[brand],
+        borderColor: "rgba(255,255,255,.92)",
+        borderWidth: 1,
         borderRadius: brand === "GMA" ? [4, 4, 0, 0] : 0,
       },
       data: points.map((point) => ({
