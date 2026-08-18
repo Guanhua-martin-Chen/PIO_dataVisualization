@@ -1,12 +1,12 @@
 import type { EChartsOption } from "echarts";
 
 export const BRAND_COLORS = {
-  HMA: "#002C5F",
-  KUS: "#8C1D40",
-  GMA: "#4B5563",
+  HMA: "#4778B8",
+  KUS: "#B0667D",
+  GMA: "#7D8795",
 } as const;
 
-export const FLEET_COLOR = "#C58A25";
+export const FLEET_COLOR = "#D1A046";
 
 const gridColor = "#e7edf4";
 
@@ -87,15 +87,15 @@ export function sponsorBrandRevenueTrendOption(
   };
   const periodAreas: any[] = [
     ...(nowcastIndex > 0 ? [[
-      { xAxis: labels[0], itemStyle: { color: "rgba(0,44,95,0.025)" } },
+      { xAxis: labels[0], itemStyle: { color: "rgba(71,120,184,0.012)" } },
       { xAxis: labels[nowcastIndex - 1] },
     ]] : []),
     ...(nowcastIndex >= 0 ? [[
-      { xAxis: labels[nowcastIndex], itemStyle: { color: "rgba(197,138,37,0.08)" } },
+      { xAxis: labels[nowcastIndex], itemStyle: { color: "rgba(209,160,70,0.055)" } },
       { xAxis: labels[nowcastIndex] },
     ]] : []),
     ...(forecastIndex >= 0 ? [[
-      { xAxis: labels[forecastIndex], itemStyle: { color: "rgba(59,120,219,0.045)" } },
+      { xAxis: labels[forecastIndex], itemStyle: { color: "rgba(71,120,184,0.025)" } },
       { xAxis: labels[labels.length - 1] },
     ]] : []),
   ];
@@ -122,7 +122,7 @@ export function sponsorBrandRevenueTrendOption(
       type: "bar" as const,
       stack: "brandRevenue",
       z: 2,
-      barMaxWidth: 46,
+      barMaxWidth: 38,
       itemStyle: {
         color: BRAND_COLORS[brand],
         borderRadius: brand === "GMA" ? [4, 4, 0, 0] : 0,
@@ -132,9 +132,9 @@ export function sponsorBrandRevenueTrendOption(
         label: brand === "GMA" ? {
           show: true,
           position: "top",
-          distance: 5,
+          distance: 6,
           formatter: currency(point.totalValue),
-          color: "#102139",
+          color: "#263a52",
           fontSize: 10,
           fontWeight: 700,
           textBorderColor: "#fff",
@@ -183,7 +183,7 @@ export function sponsorPnvwBarOption(points: Array<{ month: string; periodType: 
       name: brand,
       type: "bar",
       itemStyle: { color: BRAND_COLORS[brand], borderRadius: [4, 4, 0, 0] },
-      barMaxWidth: 28,
+      barMaxWidth: 26,
       data: months.map((month) => {
         const point = points.find((item) => item.month === month && item.brand === brand);
         return point ? {
@@ -242,7 +242,6 @@ export function sponsorBrandDonutOption(rows: Array<{ name: string; value: numbe
 export function regularWholesaleWeightOption(rows: Array<{ brand: Brand; wholesale: number | null }>): EChartsOption {
   const available = rows.filter((row): row is { brand: Brand; wholesale: number } => row.wholesale !== null);
   const total = available.reduce((sum, row) => sum + row.wholesale, 0);
-  // ECharts renders category data bottom-to-top, so reverse the desired visual order.
   const displayOrder: Brand[] = ["GMA", "KUS", "HMA"];
   return {
     ...base,
@@ -260,7 +259,7 @@ export function regularWholesaleWeightOption(rows: Array<{ brand: Brand; wholesa
     yAxis: { type: "category", data: displayOrder, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
     series: [{
       type: "bar",
-      barMaxWidth: 28,
+      barMaxWidth: 24,
       data: displayOrder.map((brand) => {
         const row = rows.find((item) => item.brand === brand);
         const value = row?.wholesale ?? 0;
@@ -303,7 +302,7 @@ export function sponsorBrandMovementOption(rows: Array<{ brand: Brand; value: nu
     yAxis: { type: "category", data: displayOrder, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#52647a", fontWeight: 700 } },
     series: [{
       type: "bar",
-      barMaxWidth: 28,
+      barMaxWidth: 24,
       data: displayOrder.map((brand) => {
         const value = rows.find((row) => row.brand === brand)?.value ?? 0;
         return {
@@ -338,7 +337,7 @@ export function sponsorQuantityDecompositionOption(rows: Array<{
     name: brand,
     type: "bar" as const,
     stack: "quantity",
-    barMaxWidth: 48,
+    barMaxWidth: 42,
     itemStyle: { color: BRAND_COLORS[brand] },
     data: brandOrder.map((category) => {
       if (category !== brand) return null;
@@ -360,7 +359,7 @@ export function sponsorQuantityDecompositionOption(rows: Array<{
     name: "Kia Fleet",
     type: "bar" as const,
     stack: "quantity",
-    barMaxWidth: 48,
+    barMaxWidth: 42,
     itemStyle: { color: FLEET_COLOR, borderRadius: [4, 4, 0, 0] },
     data: brandOrder.map((brand) => {
       const value = brand === "KUS" ? rows.find((row) => row.brand === brand)?.fleet ?? null : null;
