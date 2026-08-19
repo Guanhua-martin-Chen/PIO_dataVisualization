@@ -5,8 +5,6 @@ import { Alert, Input, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useState } from "react";
 
-import { chartColors, horizontalBarOption } from "../charts/chartOptions";
-import OfficialChart from "../charts/OfficialChart";
 import MetricCard from "../components/MetricCard";
 import type { GovernedPlcRecord, PlcEnvelope } from "../contract";
 import {
@@ -45,12 +43,16 @@ export default function PlcPlanningView({
   month,
   brand,
   level,
+  showMonthControl = true,
+  showSummaryChart = false,
   onSelectionChange,
 }: {
   payload: PlcEnvelope;
   month: string;
   brand: string;
   level: PlanningLevel;
+  showMonthControl?: boolean;
+  showSummaryChart?: boolean;
   onSelectionChange: (updates: { month?: string; brand?: string; level?: PlanningLevel }) => void;
 }) {
   const months = uniqueMonths(payload.data);
@@ -65,13 +67,6 @@ export default function PlcPlanningView({
   const modelRows = payload.data.filter((row) => row.forecast_month === month && row.brand_group === brand && row.record_type === "forecast_model_plc");
   const regularRows = brandRows.filter((row) => row.forecast_component !== "kia_fleet_cfm_adjustment");
   const fleetRows = brandRows.filter((row) => row.forecast_component === "kia_fleet_cfm_adjustment");
-  const top = brandRows
-    .flatMap((row) => {
-      const value = finite(row.forecast_plc_revenue);
-      return value === null ? [] : [{ row, value }];
-    })
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 10);
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const sourceRows = level === "brand-plc" ? brandRows : modelRows;
   const tableRows = normalizedSearch ? sourceRows.filter((row) => {
@@ -102,7 +97,7 @@ export default function PlcPlanningView({
 
   return <div className={styles.stack}>
     <div className={styles.controls}>
-      <label className={styles.controlField}><span>Forecast Month</span><MonthControl months={months} value={month} onChange={(value) => { setSearch(""); onSelectionChange({ month: value }); }} /></label>
+      {showMonthControl ? <label className={styles.controlField}><span>Forecast Month</span><MonthControl months={months} value={month} onChange={(value) => { setSearch(""); onSelectionChange({ month: value }); }} /></label> : null}
       <label className={styles.controlField}><span>Brand</span><BrandControl brands={brands} value={brand} onChange={(value) => { setSearch(""); onSelectionChange({ brand: value }); }} /></label>
       <label className={styles.controlField}><span>Planning Level</span><LevelControl value={level} onChange={(value) => { setSearch(""); onSelectionChange({ level: value }); }} /></label>
     </div>
@@ -112,7 +107,7 @@ export default function PlcPlanningView({
       <MetricCard label="Regular PLC rows" value={formatNumber(regularRows.length)} detail="Regular non-Fleet component" />
       <MetricCard label="Kia Fleet PLC rows" value={formatNumber(fleetRows.length)} detail="Separate component, added once" />
     </div>
-    <OfficialChart eyebrow={`${monthLabel(month)} / USD / forecast / Primary or Exploratory by horizon`} title={`Top PLC revenue / ${brand}`} option={top.length ? horizontalBarOption(top.map(({ row, value }) => ({ name: `${row.plc ?? "Unknown"}${row.forecast_component === "kia_fleet_cfm_adjustment" ? " (Kia Fleet)" : ""}`, value, color: row.forecast_component === "kia_fleet_cfm_adjustment" ? chartColors.amber : chartColors.blue })), true) : null} summary="Top PLCs are ranked from governed Brand + PLC records. Kia Fleet is amber and separate; units per vehicle remain decimal ratios, not percentages." />
+    {showSummaryChart ? null : null}
     <section className={styles.tableCard}>
       <div className={styles.sectionHeading}>
         <div><span>{monthLabel(month)} · Official planning grain</span><h2>{brand} {level === "brand-plc" ? "Brand + PLC" : "Brand + Model + PLC"} Planning</h2></div>
