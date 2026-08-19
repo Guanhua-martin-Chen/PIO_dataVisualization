@@ -8,6 +8,7 @@ import RunStatusBar from "./components/RunStatusBar";
 import SectionSubnav from "./components/SectionSubnav";
 import type { LatestRunResponse, ModelPerformanceEnvelope, PlcEnvelope, QaEnvelope, QuantityEnvelope, RevenueEnvelope, TopMoversEnvelope, WholesaleEnvelope, ExecutiveSummaryEnvelope, GovernedRunMetadata } from "./contract";
 import { monthLabel } from "./formatters";
+import { modelPlcMonths } from "./modelPlcSummary";
 import OfficialNavigation from "./OfficialNavigation";
 import { monthQueryValue, officialHref, resolveChoiceQuery, resolveMonthQuery, type OfficialQuery } from "./officialQuery";
 import type { BrandPayload, GovernancePayload, OutputPayload } from "./payloads";
@@ -33,7 +34,7 @@ const copy: Record<OfficialSection, { eyebrow: string; title: string; descriptio
   revenue: { eyebrow: "Approved forecast", title: "Revenue", description: "Official total, brand, and model revenue from one immutable approved run." },
   quantity: { eyebrow: "Approved forecast", title: "Quantity", description: "Accessory units, units per vehicle, and the separate Kia Fleet component." },
   wholesale: { eyebrow: "Governed input", title: "Wholesale Inputs", description: "Selected regular Wholesale is built model by model: Sponsor Plan where available, Internal Forecast only where missing." },
-  plc: { eyebrow: "Official planning grain", title: "Model & PLC Planning", description: "Latest complete Actual detail and next planning Forecast summary above reconciled Brand + PLC and Brand + Model + PLC output." },
+  plc: { eyebrow: "Official planning grain", title: "Model & PLC Planning", description: "Select a month to compare completed Actual detail with Original Forecast and future Forecast planning concentration." },
   governance: { eyebrow: "Release evidence", title: "Governance & QA", description: "Model performance, release checks, and immutable run metadata supplied by the API." },
   "top-movers": { eyebrow: "Approved movement ranking", title: "Top Movers", description: "Planning movements between adjacent forecast months, ranked by the governed API." },
   output: { eyebrow: "Approved deliverable", title: "Output Center", description: "Seven API-backed previews and the exact approved Sponsor XLSX download." },
@@ -87,7 +88,7 @@ async function loadSection(section: OfficialSection, signal: AbortSignal): Promi
 
 function sectionMonths(payload: SectionPayload, section: OfficialSection) {
   if (section === "brands") return uniqueMonths((payload as BrandPayload).revenue.data);
-  if (section === "plc") return uniqueMonths((payload as ModelPlcPlanningPayload).plc.data);
+  if (section === "plc") return modelPlcMonths(payload as ModelPlcPlanningPayload);
   if (["revenue", "quantity", "wholesale"].includes(section)) {
     return uniqueMonths((payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope).data);
   }
@@ -138,7 +139,9 @@ export default function OfficialForecastSection({
   const defaultMonth = payload && months.length
     ? section === "brands"
       ? months[0]
-      : defaultPlanningMonth(months, actualDataThrough)
+      : section === "plc"
+        ? (payload as ModelPlcPlanningPayload).historical.data.latest_complete_month
+        : defaultPlanningMonth(months, actualDataThrough)
     : "";
   const month = resolveMonthQuery(initialQuery.month, months, defaultMonth);
   const brands = section === "plc" && payload ? plcBrands(payload as ModelPlcPlanningPayload) : [];
