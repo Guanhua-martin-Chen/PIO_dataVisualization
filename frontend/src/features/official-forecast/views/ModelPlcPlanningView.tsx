@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Tag } from "antd";
+import { Alert } from "antd";
 import type { EChartsOption } from "echarts";
 import { useMemo } from "react";
 
@@ -43,12 +43,6 @@ function periodLabel(period: PlanningPeriod) {
   if (period === "actual") return "Actual";
   if (period === "original_forecast") return "Original Forecast";
   return "Forecast";
-}
-
-function periodContext(period: PlanningPeriod) {
-  if (period === "actual") return "Completed Actual";
-  if (period === "original_forecast") return "Pre-month planning view";
-  return "Official planning Forecast";
 }
 
 function modelDisplayName(value: string) {
@@ -180,7 +174,6 @@ export default function ModelPlcPlanningView({
         <div>
           <span>Model & PLC summary</span>
           <h2>{monthLabel(month)} {label}</h2>
-          <div className={styles.summaryTags}><Tag color={period === "actual" ? "blue" : "geekblue"}>{periodContext(period)}</Tag></div>
         </div>
         <label className={styles.monthField}>
           <span>Month</span>
@@ -189,22 +182,22 @@ export default function ModelPlcPlanningView({
       </div>
       <div className={styles.chartGrid}>
         <OfficialChart
-          eyebrow={`${monthLabel(month)} / USD / ${label}`}
-          title={`Top Models by ${label} Revenue`}
+          eyebrow={`${monthLabel(month)} / USD`}
+          title="Top Models by Revenue"
           option={modelBarOption(models)}
           height={300}
           summary={period === "actual"
             ? "Completed observed PIO detail by Brand + Model; no Fleet/dealer split is asserted."
-            : "Official model revenue; Kia Fleet is not allocated to vehicle models."}
+            : "Official planning revenue; Kia Fleet is not allocated to vehicle models."}
         />
         <OfficialChart
-          eyebrow={`${monthLabel(month)} / USD / ${label}`}
-          title={`Top PLCs by ${label} Revenue`}
+          eyebrow={`${monthLabel(month)} / USD`}
+          title="Top PLCs by Revenue"
           option={plcStackOption(plcs, period)}
           height={300}
           summary={period === "actual"
             ? "Completed observed PLC detail, stacked by brand."
-            : "Official Brand + PLC revenue; governed Kia Fleet is shown separately in amber."}
+            : "Official Brand + PLC planning revenue; governed Kia Fleet is shown separately in amber."}
         />
       </div>
     </section>
@@ -213,7 +206,7 @@ export default function ModelPlcPlanningView({
       <span>Detailed planning</span>
       <p>{period === "actual"
         ? "Detailed Brand + PLC and Brand + Model + PLC planning is available for Original Forecast and future Forecast months."
-        : "Use Brand and Planning Level to inspect the governed forecast records for this planning month."}</p>
+        : "Use Brand and Planning Level to inspect the governed records for this planning month."}</p>
     </section>
 
     {period === "actual"
