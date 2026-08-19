@@ -24,6 +24,7 @@ DATA_ENDPOINTS = frozenset(
         "revenue",
         "quantity",
         "plc-planning",
+        "historical-reporting",
         "wholesale-drivers",
         "model-performance",
         "top-movers",
