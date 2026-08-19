@@ -1,12 +1,13 @@
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .summaryHero { display: flex; flex-direction: column; gap: 14px; padding: 21px; border: 1px solid #dce5ef; border-radius: 18px; background: linear-gradient(135deg, rgba(248,251,255,.98), rgba(255,255,255,.96)); box-shadow: 0 14px 34px rgba(18,38,64,.055); }
 .summaryHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-.summaryHeading span, .detailDivider span { color: #64748b; font-family: "IBM Plex Mono", monospace; font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
-.summaryHeading h2 { margin: 5px 0 6px; color: #172942; font-family: "Manrope", sans-serif; font-size: 22px; letter-spacing: -.03em; }
-.summaryHeading p { max-width: 760px; margin: 0; color: #68798e; font-size: 12px; line-height: 1.55; }
+.summaryHeading > div > span, .detailDivider span, .monthField > span { color: #64748b; font-family: "IBM Plex Mono", monospace; font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.summaryHeading h2 { margin: 5px 0 0; color: #172942; font-family: "Manrope", sans-serif; font-size: 22px; letter-spacing: -.03em; }
+.monthField { min-width: 210px; display: flex; flex-direction: column; gap: 6px; }
+.monthField :global(.ant-select) { width: 100%; }
 .summaryTags { display: flex; flex-wrap: wrap; gap: 6px; }
 .chartGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
 .detailDivider { padding: 14px 4px 2px; border-top: 1px solid #dfe7f0; }
 .detailDivider p { margin: 5px 0 0; color: #6e7e92; font-size: 11px; }
 @media (max-width: 1000px) { .chartGrid { grid-template-columns: 1fr; } }
-@media (max-width: 720px) { .summaryHeading { flex-direction: column; } }
+@media (max-width: 720px) { .summaryHeading { flex-direction: column; } .monthField { width: 100%; } }
