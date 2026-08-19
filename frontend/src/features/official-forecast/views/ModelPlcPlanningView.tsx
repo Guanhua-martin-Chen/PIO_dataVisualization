@@ -56,8 +56,8 @@ function modelBarOption(rows: RankedModel[]): EChartsOption | null {
     },
     tooltip: {
       trigger: "item",
-      formatter: (params: { dataIndex?: number }) => {
-        const row = typeof params.dataIndex === "number" ? rows[params.dataIndex] : undefined;
+      formatter: (params: any) => {
+        const row = typeof params?.dataIndex === "number" ? rows[params.dataIndex] : undefined;
         return row ? `${row.brand} · ${row.name}<br/><strong>${money(row.value)}</strong>` : "";
       },
     },
@@ -68,7 +68,7 @@ function modelBarOption(rows: RankedModel[]): EChartsOption | null {
         value: row.value,
         itemStyle: { color: BRAND_COLORS[row.brand] ?? "#64748b", borderRadius: [0, 4, 4, 0] },
       })),
-      label: { show: true, position: "right", formatter: (params: { value?: unknown }) => typeof params.value === "number" ? money(params.value) : "", color: "#344a63", fontWeight: 700 },
+      label: { show: true, position: "right", formatter: (params: any) => typeof params?.value === "number" ? money(params.value) : "", color: "#344a63", fontWeight: 700 },
     }],
   };
 }
