@@ -45,11 +45,29 @@ function periodLabel(period: PlanningPeriod) {
   return "Forecast";
 }
 
+function periodContext(period: PlanningPeriod) {
+  if (period === "actual") return "Completed Actual";
+  if (period === "original_forecast") return "Pre-month planning view";
+  return "Official planning Forecast";
+}
+
+function modelDisplayName(value: string) {
+  return value
+    .split(/\s+/)
+    .map((token) => {
+      if (!token) return token;
+      if (token.toLowerCase() === "ioniq") return "IONIQ";
+      if (/\d/.test(token)) return token.toUpperCase();
+      return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
 function modelBarOption(rows: RankedModel[]): EChartsOption | null {
   if (!rows.length) return null;
   return {
     animationDuration: 400,
-    grid: { left: 130, right: 54, top: 8, bottom: 22 },
+    grid: { left: 138, right: 58, top: 8, bottom: 22 },
     xAxis: {
       type: "value",
       axisLabel: { formatter: (value: number) => money(value), color: "#65758a" },
@@ -58,8 +76,8 @@ function modelBarOption(rows: RankedModel[]): EChartsOption | null {
     yAxis: {
       type: "category",
       inverse: true,
-      data: rows.map((row) => `${row.brand} · ${row.name}`),
-      axisLabel: { color: "#344a63", width: 116, overflow: "truncate" },
+      data: rows.map((row) => `${row.brand} · ${modelDisplayName(row.name)}`),
+      axisLabel: { color: "#344a63" },
       axisLine: { show: false },
       axisTick: { show: false },
     },
@@ -67,7 +85,7 @@ function modelBarOption(rows: RankedModel[]): EChartsOption | null {
       trigger: "item",
       formatter: (params: any) => {
         const row = typeof params?.dataIndex === "number" ? rows[params.dataIndex] : undefined;
-        return row ? `${row.brand} · ${row.name}<br/><strong>${money(row.value)}</strong>` : "";
+        return row ? `${row.brand} · ${modelDisplayName(row.name)}<br/><strong>${money(row.value)}</strong>` : "";
       },
     },
     series: [{
@@ -89,7 +107,7 @@ function plcStackOption(rows: RankedPlc[], period: PlanningPeriod): EChartsOptio
     animationDuration: 400,
     color: keys.map((key) => BRAND_COLORS[key]),
     legend: { top: 0, right: 4, data: keys, selectedMode: false, textStyle: { color: "#65758a", fontSize: 10 } },
-    grid: { left: 142, right: 54, top: 38, bottom: 22 },
+    grid: { left: 176, right: 66, top: 38, bottom: 22 },
     xAxis: {
       type: "value",
       axisLabel: { formatter: (value: number) => money(value), color: "#65758a" },
@@ -99,7 +117,7 @@ function plcStackOption(rows: RankedPlc[], period: PlanningPeriod): EChartsOptio
       type: "category",
       inverse: true,
       data: rows.map((row) => row.plc),
-      axisLabel: { color: "#344a63", width: 128, overflow: "truncate" },
+      axisLabel: { color: "#344a63", width: 164, overflow: "truncate" },
       axisLine: { show: false },
       axisTick: { show: false },
     },
@@ -110,7 +128,23 @@ function plcStackOption(rows: RankedPlc[], period: PlanningPeriod): EChartsOptio
       stack: "revenue",
       barMaxWidth: 22,
       itemStyle: { color: BRAND_COLORS[key] },
-      data: rows.map((row) => row.brandValues[key] ?? 0),
+      data: rows.map((row) => {
+        const value = row.brandValues[key] ?? 0;
+        const lastVisibleKey = [...keys].reverse().find((candidate) => (row.brandValues[candidate] ?? 0) > 0);
+        return {
+          value,
+          label: key === lastVisibleKey
+            ? {
+                show: true,
+                position: "right" as const,
+                formatter: money(row.total),
+                color: "#344a63",
+                fontWeight: 700,
+                distance: 6,
+              }
+            : { show: false },
+        };
+      }),
     })),
   };
 }
@@ -146,15 +180,12 @@ export default function ModelPlcPlanningView({
         <div>
           <span>Model & PLC summary</span>
           <h2>{monthLabel(month)} {label}</h2>
+          <div className={styles.summaryTags}><Tag color={period === "actual" ? "blue" : "geekblue"}>{periodContext(period)}</Tag></div>
         </div>
         <label className={styles.monthField}>
           <span>Month</span>
           <MonthControl months={months} value={month} onChange={(value) => onSelectionChange({ month: value })} />
         </label>
-      </div>
-      <div className={styles.summaryTags}>
-        <Tag color={period === "actual" ? "blue" : "geekblue"}>{label}</Tag>
-        {period === "actual" ? <Tag>Completed month</Tag> : period === "original_forecast" ? <Tag>Pre-month planning view</Tag> : <Tag>Official planning forecast</Tag>}
       </div>
       <div className={styles.chartGrid}>
         <OfficialChart
@@ -163,8 +194,8 @@ export default function ModelPlcPlanningView({
           option={modelBarOption(models)}
           height={300}
           summary={period === "actual"
-            ? "Observed all-in PIO actual by Brand + Model. No row-level Fleet/dealer classification is asserted."
-            : "Official model revenue from the approved Revenue endpoint. Kia Fleet is not manufactured into model allocations."}
+            ? "Completed observed PIO detail by Brand + Model; no Fleet/dealer split is asserted."
+            : "Official model revenue; Kia Fleet is not allocated to vehicle models."}
         />
         <OfficialChart
           eyebrow={`${monthLabel(month)} / USD / ${label}`}
@@ -172,8 +203,8 @@ export default function ModelPlcPlanningView({
           option={plcStackOption(plcs, period)}
           height={300}
           summary={period === "actual"
-            ? "Observed all-in PLC actual, stacked by brand for display."
-            : "Official Brand + PLC revenue, with the governed Kia Fleet component kept separate in amber."}
+            ? "Completed observed PLC detail, stacked by brand."
+            : "Official Brand + PLC revenue; governed Kia Fleet is shown separately in amber."}
         />
       </div>
     </section>
@@ -186,7 +217,7 @@ export default function ModelPlcPlanningView({
     </section>
 
     {period === "actual"
-      ? <Alert type="info" showIcon message="Select July 2026 Original Forecast or a later Forecast month to open the detailed planning table." />
+      ? <Alert type="info" showIcon message="Select the current-month Original Forecast or a later Forecast month to open the detailed planning table." />
       : <PlcPlanningView payload={payload.plc} month={month} brand={brand} level={level} showMonthControl={false} onSelectionChange={onSelectionChange} />}
   </div>;
 }
