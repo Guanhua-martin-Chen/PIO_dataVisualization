@@ -44,7 +44,6 @@ export default function PlcPlanningView({
   brand,
   level,
   showMonthControl = true,
-  showSummaryChart = false,
   onSelectionChange,
 }: {
   payload: PlcEnvelope;
@@ -52,7 +51,6 @@ export default function PlcPlanningView({
   brand: string;
   level: PlanningLevel;
   showMonthControl?: boolean;
-  showSummaryChart?: boolean;
   onSelectionChange: (updates: { month?: string; brand?: string; level?: PlanningLevel }) => void;
 }) {
   const months = uniqueMonths(payload.data);
@@ -107,7 +105,6 @@ export default function PlcPlanningView({
       <MetricCard label="Regular PLC rows" value={formatNumber(regularRows.length)} detail="Regular non-Fleet component" />
       <MetricCard label="Kia Fleet PLC rows" value={formatNumber(fleetRows.length)} detail="Separate component, added once" />
     </div>
-    {showSummaryChart ? null : null}
     <section className={styles.tableCard}>
       <div className={styles.sectionHeading}>
         <div><span>{monthLabel(month)} · Official planning grain</span><h2>{brand} {level === "brand-plc" ? "Brand + PLC" : "Brand + Model + PLC"} Planning</h2></div>
