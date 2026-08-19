@@ -1,6 +1,6 @@
 "use client";
 
-import { Tag } from "antd";
+import { Alert, Tag } from "antd";
 import type { EChartsOption } from "echarts";
 import { useMemo } from "react";
 
@@ -180,9 +180,13 @@ export default function ModelPlcPlanningView({
 
     <section className={styles.detailDivider}>
       <span>Detailed planning</span>
-      <p>Use Brand and Planning Level to inspect the governed forecast records for this planning month.</p>
+      <p>{period === "actual"
+        ? "Detailed Brand + PLC and Brand + Model + PLC planning is available for Original Forecast and future Forecast months."
+        : "Use Brand and Planning Level to inspect the governed forecast records for this planning month."}</p>
     </section>
 
-    <PlcPlanningView payload={payload.plc} month={month} brand={brand} level={level} showMonthControl={false} showSummaryChart={false} onSelectionChange={onSelectionChange} />
+    {period === "actual"
+      ? <Alert type="info" showIcon message="Select July 2026 Original Forecast or a later Forecast month to open the detailed planning table." />
+      : <PlcPlanningView payload={payload.plc} month={month} brand={brand} level={level} showMonthControl={false} onSelectionChange={onSelectionChange} />}
   </div>;
 }
