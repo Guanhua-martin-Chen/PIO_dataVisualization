@@ -2,6 +2,9 @@
 const backendTarget = process.env.API_PROXY_TARGET?.trim() || "http://127.0.0.1:8000";
 
 const nextConfig = {
+  experimental: {
+    middlewareClientMaxBodySize: "100mb",
+  },
   async rewrites() {
     return [
       {
