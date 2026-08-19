@@ -15,7 +15,7 @@ import {
 import styles from "./OfficialViews.module.css";
 
 function kindLabel(kind: MoverComparisonKind) {
-  if (kind === "actual") return "Actual vs Actual";
+  if (kind === "actual") return "Actual movement";
   if (kind === "bridge") return "Actual → Original Forecast";
   return "Forecast movement";
 }
@@ -46,20 +46,18 @@ function MoverList({ direction, rows, comparison }: {
               <span className={styles.moverRank}>{row.rank}</span>
               <div className={styles.moverIdentity}>
                 <strong>{row.brand_group} / {row.plc}</strong>
-                <span>
-                  {comparison.kind === "forecast" ? (
-                    <>
-                      <Tag color={row.forecast_component === "kia_fleet_cfm_adjustment" ? "gold" : "blue"}>{componentLabel(row.forecast_component)}</Tag>
-                      {row.confidence_level ? <Tag>{row.confidence_level}</Tag> : null}
-                    </>
-                  ) : <Tag color={comparison.kind === "bridge" ? "purple" : "blue"}>{comparison.kind === "bridge" ? "Observed → Plan" : "Observed Actual"}</Tag>}
-                </span>
+                {comparison.kind === "forecast" ? (
+                  <span>
+                    <Tag color={row.forecast_component === "kia_fleet_cfm_adjustment" ? "gold" : "blue"}>{componentLabel(row.forecast_component)}</Tag>
+                    {row.confidence_level ? <Tag>{row.confidence_level}</Tag> : null}
+                  </span>
+                ) : null}
               </div>
               <div className={direction === "upside" ? styles.moverUp : styles.moverDown}>
                 <strong>{direction === "upside" ? "+" : "-"}{compactCurrency(row.absolute_revenue_change)}</strong>
                 <span>{row.revenue_change_pct === null ? "Percentage unavailable" : `${direction === "upside" ? "+" : "-"}${formatPercent(Math.abs(row.revenue_change_pct))}`}</span>
               </div>
-              <small>{monthLabel(row.comparison_month, true)} {comparison.comparison_label} {exactCurrency(row.comparison_revenue)} to {monthLabel(row.target_month, true)} {comparison.target_label} {exactCurrency(row.target_revenue)}</small>
+              <small>{monthLabel(row.comparison_month, true)} {comparison.comparison_label} {exactCurrency(row.comparison_revenue)} → {monthLabel(row.target_month, true)} {comparison.target_label} {exactCurrency(row.target_revenue)}</small>
             </li>
           ))}
         </ol>
