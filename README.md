@@ -2,6 +2,8 @@
 
 UCLA Master of Engineering Data Science capstone project with Hyundai Mobis / Mobis Parts America.
 
+**Capstone team:** Guanhua Chen, Daniella Polishchuk, Minghao Shi, Ruize Wang, and Youneng Xiong.
+
 This public repository is the **Dashboard and operator layer** for the governed PIO forecasting system. It displays one immutable Approved Run from the private forecasting repository, provides the protected monthly Update Forecast workflow, and keeps exploratory data tools separate from Official Forecast outputs.
 
 ## What this repository does
@@ -103,13 +105,16 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 3. Install the frontend dependencies
+### 3. Install and build the frontend
 
 ```powershell
 cd frontend
 npm install
+npm run build
 cd ..
 ```
+
+`npm run dev` remains useful for development. The recommended shared internal reference deployment uses the built application with `npm run start`.
 
 ### 4. Configure the Forecast API connection
 
@@ -153,16 +158,22 @@ python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 From `frontend/`:
 
 ```powershell
-npm run dev
+npm run start -- --hostname 0.0.0.0 --port 3000
 ```
 
-Open:
+Open on the host machine:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-If the host is intentionally exposed on the Mobis internal network, other authorized users may open the host's internal address from their own browsers.
+Authorized users on the same approved internal network may open:
+
+```text
+http://<host-internal-ip>:3000
+```
+
+Only the Dashboard needs to be exposed to authorized internal users. The Website backend and Forecast API can remain bound to loopback (`127.0.0.1`) on the same host.
 
 ## Monthly Update Forecast workflow
 
@@ -237,6 +248,8 @@ The website uses:
 `GOVERNED_FORECAST_API_KEY` must match the forecasting backend's `FORECAST_API_KEY`.
 
 Real values belong only in runtime environment variables or private local configuration. They must never appear in source code, URLs, screenshots, or Git commits.
+
+For the Mobis installation, use host-specific credentials rather than reusing student/demo credentials. Mobis may choose the values directly; alternatively, initial values may be provided through a private handoff channel and rotated later without changing source code.
 
 ## Validation
 
