@@ -1,96 +1,291 @@
-# Local Delivery and Demo Guide
+# Mobis Reference Deployment and Monthly Operation Guide
 
-## Architecture
+## Recommended deployment
 
-The system keeps the web repository and governed forecasting repository
-independent:
+The capstone reference deployment is intentionally simple:
 
 ```text
-Browser :3000
-  -> Website FastAPI proxy :8000
-     -> Governed Forecast API :8100
-        -> immutable approved runs and exact Sponsor XLSX
-        -> protected Update Forecast orchestration
+Mobis users (Windows or Mac browser)
+            |
+      internal network
+            |
+            v
+One Mobis host machine
+  Dashboard / Next.js        :3000
+  Website FastAPI proxy      :8000
+  Governed Forecast API      :8100
+  Forecast pipeline
+  Microsoft Excel
 ```
 
-The browser never calls the governed API directly and never receives its API
-key. The website does not fit models, parse the Sponsor workbook, or calculate
-Official totals, Expected Range, or Top Movers.
+A public domain, paid cloud server, Docker cluster, or other public hosting purchase is **not required** for the capstone handoff.
 
-## Prerequisites
+A **Windows host with desktop Microsoft Excel is recommended** for the complete governed Update Forecast workflow because the final Sponsor workbook formula-cache refresh uses Excel automation. Client users may open the Dashboard from Windows or macOS using a modern browser.
 
-- Python and Node.js versions supported by the two repositories
-- the private governed forecasting repository with its ignored runtime data
-- four current source-role workbooks for an update
-- secrets copied from `.env.example` into a local `.env` or shell environment
+Mobis IT may later deploy the same two repositories into a managed internal server, VM, cloud platform, or enterprise identity environment.
 
-## Start the three local services
+## Two repositories
+
+### Forecasting system of record — private
+
+`Guanhua-martin-Chen/pio-accessories-forecasting-optimization`
+
+Contains:
+
+- source validation;
+- forecasting pipeline;
+- model / business-rule registries;
+- QA and reconciliation;
+- Draft / Approve workflow;
+- immutable Approved Runs;
+- Forecast API;
+- Sponsor XLSX.
+
+Designated Mobis technical owners need collaborator access to clone this private repository.
+
+### Dashboard — public
+
+`Guanhua-martin-Chen/PIO_dataVisualization`
+
+Contains:
+
+- Official Forecast Dashboard;
+- Website FastAPI proxy;
+- Update Forecast UI;
+- Output Center;
+- exploratory Data Workspace.
+
+Read-only clone access does not require a GitHub invitation.
+
+## First-time installation
+
+### Forecasting repository
+
+```powershell
+cd pio-accessories-forecasting-optimization
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-update.txt
+```
+
+### Dashboard repository
+
+```powershell
+cd PIO_dataVisualization
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Then install the frontend:
+
+```powershell
+cd frontend
+npm install
+```
+
+## Configure the two deployment credentials
+
+Choose two different private values on the host machine.
+
+### Credential 1 — Forecast API key
+
+Forecast backend:
+
+```powershell
+$env:FORECAST_API_KEY = "<private-api-key>"
+```
+
+Website backend:
+
+```powershell
+$env:GOVERNED_FORECAST_API_KEY = "<same-private-api-key>"
+```
+
+These two values **must match**.
+
+### Credential 2 — Update Forecast operator password
+
+Forecast backend:
+
+```powershell
+$env:FORECAST_UPDATE_TOKEN = "<different-operator-password>"
+```
+
+The operator enters this value on the Dashboard's **Update Forecast** page.
+
+Both credentials may be changed later without modifying source code. Update the environment variables and restart the affected services. Changing credentials on a Mobis installation does not change another local installation.
+
+Never commit real credentials to GitHub.
+
+## Start the system
+
+Open three terminals on the host machine.
+
+### Terminal 1 — Governed Forecast API
 
 From the forecasting repository:
 
 ```powershell
-python -m pip install -r requirements-update.txt
-$env:FORECAST_API_KEY = "replace-with-a-local-api-key"
-$env:FORECAST_UPDATE_TOKEN = "replace-with-a-random-operator-token"
+.\.venv\Scripts\Activate.ps1
+$env:FORECAST_API_KEY = "<private-api-key>"
+$env:FORECAST_UPDATE_TOKEN = "<different-operator-password>"
 python -m uvicorn src.forecast_api.app:app --host 127.0.0.1 --port 8100
 ```
 
-From this repository:
+### Terminal 2 — Website FastAPI proxy
+
+From the Dashboard repository:
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 $env:GOVERNED_FORECAST_API_URL = "http://127.0.0.1:8100"
-$env:GOVERNED_FORECAST_API_KEY = "replace-with-the-same-api-key"
+$env:GOVERNED_FORECAST_API_KEY = "<same-private-api-key>"
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-From `frontend/`:
+### Terminal 3 — Dashboard frontend
+
+From `PIO_dataVisualization/frontend`:
 
 ```powershell
-npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`. The operator enters the access code configured in
-`FORECAST_UPDATE_TOKEN` on the protected Update Forecast page. It is remembered
-only for that browser tab/session and forwarded through the website proxy.
+Open on the host machine:
 
-## Monthly update
-
-1. Upload one workbook for each required role. Filenames may change.
-2. Pass the governed sheet, field, source-role, and month validation.
-3. Run the existing pipeline asynchronously. The current Approved Run remains
-   visible throughout processing.
-4. Review QA, reconciliation, cutoff, and Draft Run summary.
-5. Approve only a passing Draft. Approval publishes one immutable run, switches
-   `latest`, and updates the Dashboard and Sponsor XLSX together.
-
-Required workbook structures are owned by the forecasting repository and are
-validated there. The public website deliberately does not duplicate those
-parsers or schemas.
-
-## Temporary demo link
-
-Create a free ngrok account, install the Windows agent from the
-[official ngrok download page](https://ngrok.com/download/windows), and add the
-account authtoken once:
-
-```powershell
-ngrok config add-authtoken "<YOUR_AUTHTOKEN>"
+```text
+http://127.0.0.1:3000
 ```
 
-After all three local services are healthy, expose only the Next.js port:
+For internal multi-user access, Mobis IT can bind/expose the Dashboard service on the host's approved internal network address and allow authorized users to open that internal address in their browsers. The Forecast API itself should remain an internal service rather than a public internet endpoint.
+
+## Monthly Update Forecast
+
+Normal operator workflow:
+
+1. Open the Dashboard.
+2. Go to **Update Forecast**.
+3. Enter the `FORECAST_UPDATE_TOKEN` operator password.
+4. Upload one workbook for each role:
+   - CapStone / PIO
+   - HMA plan
+   - GMA plan
+   - Kia plan
+5. Click **Upload and validate**.
+6. Resolve any workbook validation failures.
+7. Run the governed pipeline.
+8. Wait for QA and Draft generation.
+9. Review cutoff, forecast window, registry version, reconciliation, and release QA.
+10. Approve only a passing Draft.
+11. The Approved Run, Dashboard, and Sponsor XLSX update together.
+
+Validation, pipeline, or QA failures leave the previous Approved Run live.
+
+## Dashboard pages used after approval
+
+Recommended review flow:
+
+```text
+Executive Overview
+  -> Brand Performance
+  -> Model & PLC Planning
+  -> Top Movers
+  -> Governance & QA
+  -> Output Center
+```
+
+The **Output Center** downloads the exact Sponsor workbook from the current Approved Run.
+
+## Temporary external demo
+
+ngrok may be used for a temporary presentation or reviewer demo after all three services are running.
+
+Example:
 
 ```powershell
 ngrok http 3000
 ```
 
-Share the generated HTTPS URL. The link works only while this computer, all
-three services, and ngrok remain running. Treat it as a demo, not permanent
-hosting. Never put API keys or the operator token in the URL or repository.
+Share only the generated HTTPS Dashboard URL.
 
-## Handoff
+Do not put API keys or the operator password in the URL.
 
-Deliver both repository URLs plus their fixed release tags and documentation.
-Mobis can deploy the two services in its own approved environment. Permanent
-hosting, enterprise identity, and infrastructure integration are deployment
-decisions outside this student-capstone reference implementation.
+The tunnel stops when ngrok or the host machine stops. Treat it as a temporary demo mechanism, **not permanent hosting**.
+
+## Troubleshooting
+
+### Dashboard says the Forecast service is unauthorized
+
+Confirm:
+
+```text
+FORECAST_API_KEY
+=
+GOVERNED_FORECAST_API_KEY
+```
+
+Then restart the Forecast API and Website backend.
+
+### Update Forecast says the operator access code is invalid
+
+Confirm the value entered in the browser matches `FORECAST_UPDATE_TOKEN` on the Forecast backend, then restart the Forecast API if the environment variable was changed.
+
+### Dashboard cannot reach the Forecast API
+
+Confirm:
+
+```text
+GOVERNED_FORECAST_API_URL=http://127.0.0.1:8100
+```
+
+and confirm the :8100 service is running.
+
+### Sponsor workbook formula-cache release fails
+
+The validated reference workflow expects a Windows host with desktop Microsoft Excel. Ensure Excel is installed and the workbook is not left open by another process.
+
+### `npm run build` behaves unexpectedly while `npm run dev` is running
+
+Stop the development server first. If necessary, remove `frontend/.next` and run the build again.
+
+## Validation commands
+
+Website proxy:
+
+```powershell
+python -m pytest -q tests/test_governed_forecast_proxy.py
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm run test:official-forecast
+npm run build
+```
+
+Forecasting repository:
+
+```powershell
+python -m pytest -q tests --basetemp=.tmp_pytest -p no:cacheprovider
+```
+
+## Handoff boundary
+
+This capstone delivers a deployable reference application and governed forecast workflow. Mobis does not need to purchase public hosting to use the reference deployment.
+
+Long-term decisions such as:
+
+- enterprise hosting;
+- auto-start services;
+- SSO / role-based access;
+- corporate secret management;
+- HTTPS / internal DNS;
+- backups;
+- monitoring;
+- retention;
+
+may be implemented later according to Mobis IT standards.
