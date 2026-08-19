@@ -8,13 +8,15 @@ import RunStatusBar from "./components/RunStatusBar";
 import SectionSubnav from "./components/SectionSubnav";
 import type { LatestRunResponse, ModelPerformanceEnvelope, PlcEnvelope, QaEnvelope, QuantityEnvelope, RevenueEnvelope, TopMoversEnvelope, WholesaleEnvelope, ExecutiveSummaryEnvelope, GovernedRunMetadata } from "./contract";
 import { monthLabel } from "./formatters";
+import { modelPlcMonths } from "./modelPlcSummary";
 import OfficialNavigation from "./OfficialNavigation";
 import { monthQueryValue, officialHref, resolveChoiceQuery, resolveMonthQuery, type OfficialQuery } from "./officialQuery";
 import type { BrandPayload, GovernancePayload, OutputPayload } from "./payloads";
+import type { TopMoversAnalysisPayload } from "./topMoverAnalysis";
 import BrandDriversView from "./views/BrandDriversView";
 import GovernanceView from "./views/GovernanceView";
+import ModelPlcPlanningView, { type HistoricalReportingEnvelope, type ModelPlcPlanningPayload } from "./views/ModelPlcPlanningView";
 import OutputView from "./views/OutputView";
-import PlcPlanningView from "./views/PlcPlanningView";
 import QuantityView from "./views/QuantityView";
 import RevenueView from "./views/RevenueView";
 import TopMoversView from "./views/TopMoversView";
@@ -27,15 +29,15 @@ export type OfficialSection = typeof OFFICIAL_SECTIONS[number];
 const MONTH_SECTIONS: OfficialSection[] = ["brands", "revenue", "quantity", "wholesale", "plc"];
 const PLC_LEVELS = ["brand-plc", "model-plc"] as const;
 
-type SectionPayload = BrandPayload | GovernancePayload | OutputPayload | RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope | PlcEnvelope | TopMoversEnvelope;
+type SectionPayload = BrandPayload | GovernancePayload | OutputPayload | RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope | ModelPlcPlanningPayload | TopMoversAnalysisPayload;
 const copy: Record<OfficialSection, { eyebrow: string; title: string; description: string }> = {
   brands: { eyebrow: "Approved brand view", title: "Brand Performance", description: "Revenue movement, regular Wholesale scale, PNVW, and separately disclosed Kia Fleet components." },
   revenue: { eyebrow: "Approved forecast", title: "Revenue", description: "Official total, brand, and model revenue from one immutable approved run." },
   quantity: { eyebrow: "Approved forecast", title: "Quantity", description: "Accessory units, units per vehicle, and the separate Kia Fleet component." },
   wholesale: { eyebrow: "Governed input", title: "Wholesale Inputs", description: "Selected regular Wholesale is built model by model: Sponsor Plan where available, Internal Forecast only where missing." },
-  plc: { eyebrow: "Official planning grain", title: "PLC Planning", description: "Reconciled Brand + PLC and Brand + Model + PLC output; no exact part-level data." },
+  plc: { eyebrow: "Official planning grain", title: "Model & PLC Planning", description: "Select a month to compare completed Actual detail with Original Forecast and future Forecast planning concentration." },
   governance: { eyebrow: "Release evidence", title: "Governance & QA", description: "Model performance, release checks, and immutable run metadata supplied by the API." },
-  "top-movers": { eyebrow: "Approved movement ranking", title: "Top Movers", description: "API-ranked Brand + PLC revenue movement between adjacent forecast months." },
+  "top-movers": { eyebrow: "Revenue movement analysis", title: "Top Movers", description: "Compare completed Actual movement, the Actual-to-Plan bridge, and governed adjacent-month Forecast movement." },
   output: { eyebrow: "Approved deliverable", title: "Output Center", description: "Seven API-backed previews and the exact approved Sponsor XLSX download." },
 };
 
@@ -53,6 +55,27 @@ async function loadBrand(signal: AbortSignal): Promise<BrandPayload> {
   verifyRun([executive, revenue, quantity, wholesale]);
   return { executive, revenue, quantity, wholesale };
 }
+
+async function loadModelPlcPlanning(signal: AbortSignal): Promise<ModelPlcPlanningPayload> {
+  const [plc, revenue, historical] = await Promise.all([
+    governedFetch<PlcEnvelope>("/plc-planning", signal),
+    governedFetch<RevenueEnvelope>("/revenue", signal),
+    governedFetch<HistoricalReportingEnvelope>("/historical-reporting", signal),
+  ]);
+  verifyRun([plc, revenue, historical]);
+  return { plc, revenue, historical };
+}
+
+async function loadTopMovers(signal: AbortSignal): Promise<TopMoversAnalysisPayload> {
+  const [forecast, historical, plc] = await Promise.all([
+    governedFetch<TopMoversEnvelope>("/top-movers", signal),
+    governedFetch<HistoricalReportingEnvelope>("/historical-reporting", signal),
+    governedFetch<PlcEnvelope>("/plc-planning", signal),
+  ]);
+  verifyRun([forecast, historical, plc]);
+  return { forecast, historical, plc };
+}
+
 async function loadGovernance(signal: AbortSignal): Promise<GovernancePayload> {
   const [performance, qa, latest] = await Promise.all([governedFetch<ModelPerformanceEnvelope>("/model-performance", signal), governedFetch<QaEnvelope>("/qa", signal), governedFetch<LatestRunResponse>("/runs/latest", signal)]);
   verifyRun([performance, qa, latest]); return { performance, qa, latest };
@@ -67,24 +90,26 @@ async function loadSection(section: OfficialSection, signal: AbortSignal): Promi
   if (section === "brands") return loadBrand(signal);
   if (section === "governance") return loadGovernance(signal);
   if (section === "output") return loadOutput(signal);
+  if (section === "plc") return loadModelPlcPlanning(signal);
+  if (section === "top-movers") return loadTopMovers(signal);
   if (section === "revenue") return governedFetch<RevenueEnvelope>("/revenue", signal);
   if (section === "quantity") return governedFetch<QuantityEnvelope>("/quantity", signal);
   if (section === "wholesale") return governedFetch<WholesaleEnvelope>("/wholesale-drivers", signal);
-  if (section === "plc") return governedFetch<PlcEnvelope>("/plc-planning", signal);
-  return governedFetch<TopMoversEnvelope>("/top-movers", signal);
+  throw new ForecastRequestError(404, "unknown_official_section", "Unknown Official Forecast section.");
 }
 
 function sectionMonths(payload: SectionPayload, section: OfficialSection) {
   if (section === "brands") return uniqueMonths((payload as BrandPayload).revenue.data);
-  if (MONTH_SECTIONS.includes(section)) {
-    return uniqueMonths((payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope | PlcEnvelope).data);
+  if (section === "plc") return modelPlcMonths(payload as ModelPlcPlanningPayload);
+  if (["revenue", "quantity", "wholesale"].includes(section)) {
+    return uniqueMonths((payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope).data);
   }
   return [];
 }
 
-function plcBrands(payload: PlcEnvelope) {
+function plcBrands(payload: ModelPlcPlanningPayload) {
   const order = ["HMA", "GMA", "KUS"];
-  return [...new Set(payload.data.flatMap((row) => row.brand_group ? [row.brand_group] : []))]
+  return [...new Set(payload.plc.data.flatMap((row) => row.brand_group ? [row.brand_group] : []))]
     .sort((left, right) => {
       const leftIndex = order.indexOf(left);
       const rightIndex = order.indexOf(right);
@@ -117,17 +142,21 @@ export default function OfficialForecastSection({
   const actualDataThrough = payload
     ? section === "brands"
       ? (payload as BrandPayload).revenue.meta.actual_data_through
-      : MONTH_SECTIONS.includes(section)
-        ? (payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope | PlcEnvelope).meta.actual_data_through
-        : ""
+      : section === "plc"
+        ? (payload as ModelPlcPlanningPayload).plc.meta.actual_data_through
+        : ["revenue", "quantity", "wholesale"].includes(section)
+          ? (payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope).meta.actual_data_through
+          : ""
     : "";
   const defaultMonth = payload && months.length
     ? section === "brands"
       ? months[0]
-      : defaultPlanningMonth(months, actualDataThrough)
+      : section === "plc"
+        ? (payload as ModelPlcPlanningPayload).historical.data.latest_complete_month
+        : defaultPlanningMonth(months, actualDataThrough)
     : "";
   const month = resolveMonthQuery(initialQuery.month, months, defaultMonth);
-  const brands = section === "plc" && payload ? plcBrands(payload as PlcEnvelope) : [];
+  const brands = section === "plc" && payload ? plcBrands(payload as ModelPlcPlanningPayload) : [];
   const brand = resolveChoiceQuery(initialQuery.brand, brands, brands[0] ?? "");
   const level = resolveChoiceQuery(initialQuery.level, PLC_LEVELS, "brand-plc");
   const navigationQuery: OfficialQuery = useMemo(() => ({
@@ -155,9 +184,9 @@ export default function OfficialForecastSection({
     if (section === "revenue") return <RevenueView payload={payload as RevenueEnvelope} month={month} onMonthChange={(value) => updateQuery({ month: value })} />;
     if (section === "quantity") return <QuantityView payload={payload as QuantityEnvelope} month={month} onMonthChange={(value) => updateQuery({ month: value })} />;
     if (section === "wholesale") return <WholesaleDriversView payload={payload as WholesaleEnvelope} month={month} onMonthChange={(value) => updateQuery({ month: value })} />;
-    if (section === "plc") return <PlcPlanningView payload={payload as PlcEnvelope} month={month} brand={brand} level={level} onSelectionChange={(updates) => updateQuery(updates)} />;
+    if (section === "plc") return <ModelPlcPlanningView payload={payload as ModelPlcPlanningPayload} month={month} brand={brand} level={level} onSelectionChange={(updates) => updateQuery(updates)} />;
     if (section === "governance") return <GovernanceView payload={payload as GovernancePayload} />;
-    if (section === "top-movers") return <TopMoversView payload={payload as TopMoversEnvelope} />;
+    if (section === "top-movers") return <TopMoversView payload={payload as TopMoversAnalysisPayload} />;
     return <OutputView payload={payload as OutputPayload} />;
   }, [brand, level, month, payload, section, updateQuery]);
   const sectionGroup = ["revenue", "quantity"].includes(section) ? "forecasts" : ["brands", "wholesale", "plc", "top-movers"].includes(section) ? "drivers" : null;
@@ -167,7 +196,11 @@ export default function OfficialForecastSection({
       ? (payload as GovernancePayload).performance.meta
       : section === "brands"
         ? (payload as BrandPayload).revenue.meta
-        : (payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope | PlcEnvelope | TopMoversEnvelope).meta
+        : section === "plc"
+          ? (payload as ModelPlcPlanningPayload).plc.meta
+          : section === "top-movers"
+            ? (payload as TopMoversAnalysisPayload).forecast.meta
+            : (payload as RevenueEnvelope | QuantityEnvelope | WholesaleEnvelope).meta
     : null;
   const title = section === "wholesale" && month
     ? `${monthLabel(month)} Governed Wholesale Inputs`
