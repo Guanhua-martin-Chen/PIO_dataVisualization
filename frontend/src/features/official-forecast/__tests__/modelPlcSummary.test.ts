@@ -3,6 +3,8 @@ import test from "node:test";
 
 import type { PlcEnvelope, RevenueEnvelope } from "../contract.ts";
 import {
+  modelPlcMonths,
+  planningPeriodForMonth,
   topActualModels,
   topActualPlcs,
   topForecastModels,
@@ -79,6 +81,7 @@ function plc(): PlcEnvelope {
   return {
     meta,
     data: [
+      { ...base, record_type: "forecast_brand_plc", forecast_month: "2026-07-01", period_type: "forecast", forecast_component: "regular", brand_group: "HMA", plc: "Crossbar", forecast_plc_revenue: 150 },
       { ...base, record_type: "forecast_brand_plc", forecast_month: "2026-08-01", period_type: "forecast", forecast_component: "regular", brand_group: "HMA", plc: "Carpet Floor Mat", forecast_plc_revenue: 300 },
       { ...base, record_type: "forecast_brand_plc", forecast_month: "2026-08-01", period_type: "forecast", forecast_component: "regular", brand_group: "KUS", plc: "Carpet Floor Mat", forecast_plc_revenue: 200 },
       { ...base, record_type: "forecast_brand_plc", forecast_month: "2026-08-01", period_type: "forecast", forecast_component: "kia_fleet_cfm_adjustment", brand_group: "KUS", plc: "Carpet Floor Mat", forecast_plc_revenue: 100 },
@@ -86,6 +89,21 @@ function plc(): PlcEnvelope {
     ],
   };
 }
+
+function payload() {
+  return { historical: historical(), revenue: revenue(), plc: plc() };
+}
+
+test("unified Model PLC month list combines completed Actual and planning months", () => {
+  assert.deepEqual(modelPlcMonths(payload()), ["2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01"]);
+});
+
+test("month semantics distinguish Actual, current-month Original Forecast, and later Forecast", () => {
+  const history = historical();
+  assert.equal(planningPeriodForMonth(history, "2026-07-28", "2026-06-01"), "actual");
+  assert.equal(planningPeriodForMonth(history, "2026-07-28", "2026-07-01"), "original_forecast");
+  assert.equal(planningPeriodForMonth(history, "2026-07-28", "2026-08-01"), "forecast");
+});
 
 test("actual summary uses only the selected completed month", () => {
   assert.deepEqual(topActualModels(historical(), "2026-06-01").map((row) => row.name), ["tucson", "telluride"]);
