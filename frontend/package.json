@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "preview": "next build && next start --hostname 127.0.0.1 --port 3001",
-    "test:official-forecast": "node --test src/features/official-forecast/__tests__/viewModels.test.ts src/features/official-forecast/__tests__/modelPlcSummary.test.ts"
+    "test:official-forecast": "node --test src/features/official-forecast/__tests__/viewModels.test.ts src/features/official-forecast/__tests__/modelPlcSummary.test.ts src/features/official-forecast/__tests__/topMoverAnalysis.test.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
