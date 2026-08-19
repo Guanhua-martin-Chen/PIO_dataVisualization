@@ -96,10 +96,10 @@ test("Top Movers groups include Actual, bridge, and API Forecast comparisons", (
   assert.equal(groups[2].comparisons.length, 1);
 });
 
-test("Actual comparison ranks observed Brand + PLC changes", () => {
+test("Actual comparison ranks observed Brand + PLC changes with chronological label", () => {
   const groups = buildMoverComparisonGroups(payload);
   const mayToJune = groups[0].comparisons[1];
-  assert.equal(mayToJune.title, "Jun 2026 Actual vs May 2026 Actual");
+  assert.equal(mayToJune.title, "May 2026 Actual → Jun 2026 Actual");
   assert.equal(mayToJune.upside[0].brand_group, "HMA");
   assert.equal(mayToJune.upside[0].absolute_revenue_change, 20);
   assert.equal(mayToJune.downside[0].brand_group, "KUS");
@@ -109,12 +109,14 @@ test("Actual comparison ranks observed Brand + PLC changes", () => {
 test("Actual-to-Plan bridge combines planning components at Brand + PLC all-in grain", () => {
   const groups = buildMoverComparisonGroups(payload);
   const bridge = groups[1].comparisons[0];
-  assert.equal(bridge.title, "Jul 2026 Original Forecast vs Jun 2026 Actual");
+  assert.equal(bridge.title, "Jun 2026 Actual → Jul 2026 Original Forecast");
   assert.equal(bridge.upside[0].brand_group, "HMA");
   assert.equal(bridge.upside[0].comparison_revenue, 150);
   assert.equal(bridge.upside[0].target_revenue, 180);
 });
 
-test("Default comparison remains the governed July-to-August Forecast comparison", () => {
+test("Forecast comparison label is chronological and default remains governed July-to-August", () => {
+  const groups = buildMoverComparisonGroups(payload);
+  assert.equal(groups[2].comparisons[0].title, "Jul 2026 Original Forecast → Aug 2026 Forecast");
   assert.equal(defaultMoverComparisonId(payload), "2026-08_vs_2026-07_brand_plc");
 });
