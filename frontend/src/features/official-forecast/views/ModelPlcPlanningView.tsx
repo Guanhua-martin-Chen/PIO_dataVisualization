@@ -1,27 +1,30 @@
 "use client";
 
-import { Segmented, Tag } from "antd";
+import { Tag } from "antd";
 import type { EChartsOption } from "echarts";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import OfficialChart from "../charts/OfficialChart";
 import { monthLabel } from "../formatters";
 import {
+  modelPlcMonths,
+  planningPeriodForMonth,
   topActualModels,
   topActualPlcs,
   topForecastModels,
   topForecastPlcs,
   type ModelPlcPlanningPayload,
+  type PlanningPeriod,
   type RankedModel,
   type RankedPlc,
 } from "../modelPlcSummary";
+import { MonthControl } from "./controls";
 import PlcPlanningView from "./PlcPlanningView";
 import styles from "./ModelPlcPlanningView.module.css";
 
 export type { HistoricalReportingEnvelope, ModelPlcPlanningPayload } from "../modelPlcSummary";
 
 type PlanningLevel = "brand-plc" | "model-plc";
-type SummaryMode = "actual" | "forecast";
 
 const BRAND_COLORS: Record<string, string> = {
   HMA: "#0057B8",
@@ -34,6 +37,12 @@ function money(value: number) {
   if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${Math.round(value).toLocaleString("en-US")}`;
+}
+
+function periodLabel(period: PlanningPeriod) {
+  if (period === "actual") return "Actual";
+  if (period === "original_forecast") return "Original Forecast";
+  return "Forecast";
 }
 
 function modelBarOption(rows: RankedModel[]): EChartsOption | null {
@@ -73,9 +82,9 @@ function modelBarOption(rows: RankedModel[]): EChartsOption | null {
   };
 }
 
-function plcStackOption(rows: RankedPlc[]): EChartsOption | null {
+function plcStackOption(rows: RankedPlc[], period: PlanningPeriod): EChartsOption | null {
   if (!rows.length) return null;
-  const keys = ["HMA", "KUS", "GMA", "Kia Fleet"];
+  const keys = period === "actual" ? ["HMA", "KUS", "GMA"] : ["HMA", "KUS", "GMA", "Kia Fleet"];
   return {
     animationDuration: 400,
     color: keys.map((key) => BRAND_COLORS[key]),
@@ -119,51 +128,50 @@ export default function ModelPlcPlanningView({
   level: PlanningLevel;
   onSelectionChange: (updates: { month?: string; brand?: string; level?: PlanningLevel }) => void;
 }) {
-  const [mode, setMode] = useState<SummaryMode>("actual");
-  const actualMonth = payload.historical.data.latest_complete_month;
-  const forecastMonth = month;
+  const months = modelPlcMonths(payload);
+  const period = planningPeriodForMonth(payload.historical, payload.plc.meta.actual_data_through, month);
+  const label = periodLabel(period);
   const models = useMemo(
-    () => mode === "actual" ? topActualModels(payload.historical, actualMonth) : topForecastModels(payload.revenue, forecastMonth),
-    [actualMonth, forecastMonth, mode, payload.historical, payload.revenue],
+    () => period === "actual" ? topActualModels(payload.historical, month) : topForecastModels(payload.revenue, month),
+    [month, payload.historical, payload.revenue, period],
   );
   const plcs = useMemo(
-    () => mode === "actual" ? topActualPlcs(payload.historical, actualMonth) : topForecastPlcs(payload.plc, forecastMonth),
-    [actualMonth, forecastMonth, mode, payload.historical, payload.plc],
+    () => period === "actual" ? topActualPlcs(payload.historical, month) : topForecastPlcs(payload.plc, month),
+    [month, payload.historical, payload.plc, period],
   );
-  const displayMonth = mode === "actual" ? actualMonth : forecastMonth;
 
   return <div className={styles.stack}>
     <section className={styles.summaryHero}>
       <div className={styles.summaryHeading}>
         <div>
-          <span>Executive Model & PLC detail</span>
-          <h2>{mode === "actual" ? "Latest complete actual" : "Next planning forecast"}</h2>
-          <p>{mode === "actual"
-            ? `${monthLabel(actualMonth)} is the latest complete month available for Model / PLC actual analysis.`
-            : `${monthLabel(forecastMonth)} shows official forecast concentration using the approved Revenue and PLC Planning outputs.`}</p>
+          <span>Model & PLC summary</span>
+          <h2>{monthLabel(month)} {label}</h2>
         </div>
-        <Segmented value={mode} onChange={(value) => setMode(value as SummaryMode)} options={[{ label: "Actual", value: "actual" }, { label: "Forecast", value: "forecast" }]} />
+        <label className={styles.monthField}>
+          <span>Month</span>
+          <MonthControl months={months} value={month} onChange={(value) => onSelectionChange({ month: value })} />
+        </label>
       </div>
       <div className={styles.summaryTags}>
-        <Tag color={mode === "actual" ? "blue" : "geekblue"}>{monthLabel(displayMonth)} {mode === "actual" ? "Actual" : "Forecast"}</Tag>
-        {mode === "actual" ? <Tag>Completed month only</Tag> : <Tag>Official planning detail</Tag>}
+        <Tag color={period === "actual" ? "blue" : "geekblue"}>{label}</Tag>
+        {period === "actual" ? <Tag>Completed month</Tag> : period === "original_forecast" ? <Tag>Pre-month planning view</Tag> : <Tag>Official planning forecast</Tag>}
       </div>
       <div className={styles.chartGrid}>
         <OfficialChart
-          eyebrow={`${monthLabel(displayMonth)} / USD / ${mode}`}
-          title={`Top Models by ${mode === "actual" ? "Actual" : "Forecast"} Revenue`}
+          eyebrow={`${monthLabel(month)} / USD / ${label}`}
+          title={`Top Models by ${label} Revenue`}
           option={modelBarOption(models)}
           height={300}
-          summary={mode === "actual"
+          summary={period === "actual"
             ? "Observed all-in PIO actual by Brand + Model. No row-level Fleet/dealer classification is asserted."
             : "Official model revenue from the approved Revenue endpoint. Kia Fleet is not manufactured into model allocations."}
         />
         <OfficialChart
-          eyebrow={`${monthLabel(displayMonth)} / USD / ${mode}`}
-          title={`Top PLCs by ${mode === "actual" ? "Actual" : "Forecast"} Revenue`}
-          option={plcStackOption(plcs)}
+          eyebrow={`${monthLabel(month)} / USD / ${label}`}
+          title={`Top PLCs by ${label} Revenue`}
+          option={plcStackOption(plcs, period)}
           height={300}
-          summary={mode === "actual"
+          summary={period === "actual"
             ? "Observed all-in PLC actual, stacked by brand for display."
             : "Official Brand + PLC revenue, with the governed Kia Fleet component kept separate in amber."}
         />
@@ -171,10 +179,10 @@ export default function ModelPlcPlanningView({
     </section>
 
     <section className={styles.detailDivider}>
-      <span>Detailed planning workspace</span>
-      <p>Forecast controls and reconciled Brand + PLC / Brand + Model + PLC detail remain unchanged below.</p>
+      <span>Detailed planning</span>
+      <p>Use Brand and Planning Level to inspect the governed forecast records for this planning month.</p>
     </section>
 
-    <PlcPlanningView payload={payload.plc} month={month} brand={brand} level={level} onSelectionChange={onSelectionChange} />
+    <PlcPlanningView payload={payload.plc} month={month} brand={brand} level={level} showMonthControl={false} showSummaryChart={false} onSelectionChange={onSelectionChange} />
   </div>;
 }
