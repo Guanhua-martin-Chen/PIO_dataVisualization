@@ -151,7 +151,7 @@ function plcStackOption(rows: RankedPlc[]): EChartsOption | null {
   };
 }
 
-function topActualModels(historical: HistoricalReportingEnvelope, month: string): RankedModel[] {
+export function topActualModels(historical: HistoricalReportingEnvelope, month: string): RankedModel[] {
   return historical.data.model_records
     .filter((row) => row.month === month)
     .map((row) => ({ name: row.normalized_model, brand: row.brand_group, value: row.pio_revenue }))
@@ -159,9 +159,14 @@ function topActualModels(historical: HistoricalReportingEnvelope, month: string)
     .slice(0, 6);
 }
 
-function topForecastModels(revenue: RevenueEnvelope, month: string): RankedModel[] {
+export function topForecastModels(revenue: RevenueEnvelope, month: string): RankedModel[] {
   return revenue.data
-    .filter((row: GovernedForecastRecord) => row.forecast_month === month && row.record_type.endsWith("_model") && row.period_type === "forecast" && row.brand_group && row.normalized_model)
+    .filter((row: GovernedForecastRecord) => row.forecast_month === month
+      && row.record_type.endsWith("_model")
+      && row.period_type === "forecast"
+      && row.forecast_component !== "kia_fleet_cfm_adjustment"
+      && row.brand_group
+      && row.normalized_model)
     .flatMap((row) => {
       const value = finite(row.forecast_pio_revenue);
       return value === null ? [] : [{ name: row.normalized_model as string, brand: row.brand_group as string, value }];
@@ -181,13 +186,13 @@ function rankedPlcs(rows: Array<{ plc: string; brand: string; value: number }>):
   return [...grouped.values()].sort((left, right) => right.total - left.total).slice(0, 6);
 }
 
-function topActualPlcs(historical: HistoricalReportingEnvelope, month: string): RankedPlc[] {
+export function topActualPlcs(historical: HistoricalReportingEnvelope, month: string): RankedPlc[] {
   return rankedPlcs(historical.data.plc_records
     .filter((row) => row.month === month)
     .map((row) => ({ plc: row.plc, brand: row.brand_group, value: row.pio_revenue })));
 }
 
-function topForecastPlcs(plc: PlcEnvelope, month: string): RankedPlc[] {
+export function topForecastPlcs(plc: PlcEnvelope, month: string): RankedPlc[] {
   return rankedPlcs(plc.data
     .filter((row: GovernedPlcRecord) => row.forecast_month === month && row.record_type === "forecast_brand_plc" && row.period_type === "forecast" && row.plc && row.brand_group)
     .flatMap((row) => {
