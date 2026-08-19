@@ -79,12 +79,15 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Then install the frontend:
+Then install and build the frontend:
 
 ```powershell
 cd frontend
 npm install
+npm run build
 ```
+
+`npm run dev` is for development. The shared internal reference deployment should run the built frontend with `npm run start`.
 
 ## Configure the two deployment credentials
 
@@ -117,6 +120,8 @@ $env:FORECAST_UPDATE_TOKEN = "<different-operator-password>"
 The operator enters this value on the Dashboard's **Update Forecast** page.
 
 Both credentials may be changed later without modifying source code. Update the environment variables and restart the affected services. Changing credentials on a Mobis installation does not change another local installation.
+
+For the Mobis installation, use host-specific credentials rather than reusing student/demo values. Mobis may choose the values directly, or initial values may be shared separately through a private handoff channel and rotated later.
 
 Never commit real credentials to GitHub.
 
@@ -151,7 +156,7 @@ python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 From `PIO_dataVisualization/frontend`:
 
 ```powershell
-npm run dev
+npm run start -- --hostname 0.0.0.0 --port 3000
 ```
 
 Open on the host machine:
@@ -160,7 +165,15 @@ Open on the host machine:
 http://127.0.0.1:3000
 ```
 
-For internal multi-user access, Mobis IT can bind/expose the Dashboard service on the host's approved internal network address and allow authorized users to open that internal address in their browsers. The Forecast API itself should remain an internal service rather than a public internet endpoint.
+Authorized users on the same approved internal network may open:
+
+```text
+http://<host-internal-ip>:3000
+```
+
+Only the Dashboard needs to be exposed to authorized internal users. The Website backend and Forecast API can remain bound to loopback (`127.0.0.1`) on the same host.
+
+If the host firewall blocks port 3000, Mobis IT must allow the Dashboard port on the approved internal network before other client devices can connect.
 
 ## Monthly Update Forecast
 
@@ -242,6 +255,10 @@ GOVERNED_FORECAST_API_URL=http://127.0.0.1:8100
 ```
 
 and confirm the :8100 service is running.
+
+### Another device cannot open the Dashboard
+
+Confirm the frontend is running with `--hostname 0.0.0.0`, use the host's internal IP rather than `127.0.0.1`, and confirm the host firewall permits port 3000 on the approved internal network.
 
 ### Sponsor workbook formula-cache release fails
 
