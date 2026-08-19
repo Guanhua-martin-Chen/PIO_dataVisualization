@@ -8,7 +8,7 @@ import OfficialChart from "../charts/OfficialChart";
 import type { GovernedForecastRecord, GovernedPlcRecord, GovernedRunMetadata, PlcEnvelope, RevenueEnvelope } from "../contract";
 import { finite, monthLabel } from "../formatters";
 import PlcPlanningView from "./PlcPlanningView";
-import styles from "./OfficialViews.module.css";
+import styles from "./ModelPlcPlanningView.module.css";
 
 type PlanningLevel = "brand-plc" | "model-plc";
 type SummaryMode = "actual" | "forecast";
@@ -161,7 +161,7 @@ function topActualModels(historical: HistoricalReportingEnvelope, month: string)
 
 function topForecastModels(revenue: RevenueEnvelope, month: string): RankedModel[] {
   return revenue.data
-    .filter((row: GovernedForecastRecord) => row.forecast_month === month && row.record_type === "forecast_model" && row.brand_group && row.normalized_model)
+    .filter((row: GovernedForecastRecord) => row.forecast_month === month && row.record_type.endsWith("_model") && row.period_type === "forecast" && row.brand_group && row.normalized_model)
     .flatMap((row) => {
       const value = finite(row.forecast_pio_revenue);
       return value === null ? [] : [{ name: row.normalized_model as string, brand: row.brand_group as string, value }];
@@ -189,7 +189,7 @@ function topActualPlcs(historical: HistoricalReportingEnvelope, month: string): 
 
 function topForecastPlcs(plc: PlcEnvelope, month: string): RankedPlc[] {
   return rankedPlcs(plc.data
-    .filter((row: GovernedPlcRecord) => row.forecast_month === month && row.record_type === "forecast_brand_plc" && row.plc && row.brand_group)
+    .filter((row: GovernedPlcRecord) => row.forecast_month === month && row.record_type === "forecast_brand_plc" && row.period_type === "forecast" && row.plc && row.brand_group)
     .flatMap((row) => {
       const value = finite(row.forecast_plc_revenue);
       if (value === null) return [];
