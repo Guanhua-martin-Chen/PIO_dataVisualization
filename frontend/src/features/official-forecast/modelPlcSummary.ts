@@ -59,8 +59,25 @@ export type ModelPlcPlanningPayload = {
   historical: HistoricalReportingEnvelope;
 };
 
+export type PlanningPeriod = "actual" | "original_forecast" | "forecast";
 export type RankedModel = { name: string; brand: string; value: number };
 export type RankedPlc = { plc: string; total: number; brandValues: Record<string, number> };
+
+export function modelPlcMonths(payload: ModelPlcPlanningPayload): string[] {
+  const actualMonths = payload.historical.data.available_months;
+  const forecastMonths = payload.plc.data.map((row) => row.forecast_month);
+  return [...new Set([...actualMonths, ...forecastMonths])].sort();
+}
+
+export function planningPeriodForMonth(
+  historical: HistoricalReportingEnvelope,
+  actualDataThrough: string,
+  month: string,
+): PlanningPeriod {
+  if (historical.data.available_months.includes(month)) return "actual";
+  if (month.slice(0, 7) === actualDataThrough.slice(0, 7)) return "original_forecast";
+  return "forecast";
+}
 
 export function topActualModels(historical: HistoricalReportingEnvelope, month: string): RankedModel[] {
   return historical.data.model_records
