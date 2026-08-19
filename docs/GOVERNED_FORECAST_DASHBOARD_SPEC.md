@@ -2,19 +2,17 @@
 
 ## 1. Product outcome
 
-The website should give Mobis planners one clear place to inspect source data,
-understand the latest approved PIO forecast, identify material drivers, and
-download the matching Sponsor workbook.
+The website gives Mobis planners one clear place to understand the latest approved PIO forecast, review completed Actual detail, inspect Model/PLC planning and movers, run the protected monthly refresh workflow, and download the matching Sponsor workbook.
 
-The first screen should answer, in under one minute:
+The executive experience should answer quickly:
 
 - Where is the current month expected to land?
-- How did that change from the pre-month forecast?
-- What is the expected range?
-- What is the next-month forecast?
-- Which brands, models, and PLCs drive the change?
+- How does it compare with the pre-month forecast?
+- What is the next-month outlook?
+- Which brands, models, and PLCs are driving the planning view?
+- What are the largest completed-Actual, Actual-to-Plan, and Forecast movements?
 - Through what date are actuals available?
-- Which approved run and registry are being shown?
+- Which Approved Run and registry are being shown?
 
 ## 2. Product boundary
 
@@ -22,166 +20,218 @@ The product has two deliberately separate areas.
 
 ### Data Workspace
 
-Retain useful website-native capabilities when they pass audit:
+The Data Workspace remains exploratory. It may support:
 
-- Excel upload for exploratory workspace use;
+- Excel upload for exploratory analysis;
 - sheet inspection;
-- Raw Data EDA;
-- Data Table with pagination and filters;
+- EDA;
+- paginated Data Table;
 - Pivot Table;
 - filtered CSV export;
 - data-quality diagnostics.
 
-These features are exploratory and operational. Uploading a workbook here must
-not silently retrain the official model or replace the approved Forecast API
-run.
+A Data Workspace upload must never retrain, replace, or relabel the Official Forecast.
 
 ### Official Forecast
 
-All official numbers come from one approved Forecast API run. The website may
-filter, aggregate for display where contract-safe, format, and visualize those
-records. It may not select models, recalculate the official forecast, restore
-exact-part planning, or create a different Sponsor workbook.
+The Official Forecast consumes one immutable Approved Run from the governed forecasting repository.
 
-## 3. Target architecture
+The website may:
+
+- filter and format approved records;
+- visualize approved records;
+- perform contract-safe display aggregation;
+- calculate completed-Actual movement from approved Historical Reporting records;
+- calculate the Actual-to-Plan Brand + PLC bridge from approved Historical Reporting plus approved PLC Planning records.
+
+The website may not:
+
+- fit production models;
+- select or promote production strategies;
+- reconstruct a competing Official total;
+- infer exact-part Official planning;
+- invent Fleet attribution;
+- generate a competing Sponsor workbook.
+
+## 3. Architecture
 
 ```text
 Governed Forecasting Repository
-  controlled pipeline -> QA -> approved immutable run
-    -> versioned Forecast API
-    -> exact seven-sheet Sponsor workbook
+  four source-role uploads
+    -> validation
+    -> governed pipeline
+    -> QA / reconciliation
+    -> Draft
+    -> explicit approval
+    -> immutable Approved Run
+         -> versioned Forecast API
+         -> exact Sponsor XLSX
                     |
                     v
 Website FastAPI server-side proxy / adapter
                     |
                     v
-Next.js + React + Ant Design + ECharts dashboard
+Next.js + React + Ant Design + ECharts Dashboard
 ```
 
-The browser calls only the website backend. The website backend stores:
+The browser calls only the website layer. The website backend holds:
 
 - `GOVERNED_FORECAST_API_URL`
 - `GOVERNED_FORECAST_API_KEY`
 
-The key must not use a `NEXT_PUBLIC_` environment variable and must not be
-returned to the browser.
+The Forecast API key must never be exposed through a `NEXT_PUBLIC_` variable or returned to the browser.
+
+The protected Update Forecast operator token is entered by the operator and forwarded through the website proxy to the governed forecasting service.
 
 ## 4. Information architecture
 
-### 4.1 Executive Overview — default Official Forecast page
+### 4.1 Executive Overview
 
-Use a sponsor-facing hierarchy with a small number of large KPIs:
+Prioritize:
 
-- Current Month Actual or Nowcast;
-- Pre-Month Forecast;
-- Change in dollars and percent;
-- Expected Range;
-- Next-Month Forecast;
-- Actual Data Through;
-- H1 WAPE;
-- Forecast Status;
-- HMA, GMA, and KUS contribution split;
-- a short, rules-based BLUF draft.
+- current-month Actual or Nowcast;
+- pre-month forecast and movement;
+- next-month forecast;
+- expected range when supplied;
+- HMA / GMA / KUS contribution;
+- actual-data cutoff;
+- H1 performance context;
+- Approved Run and release status.
 
-The page must visibly label `actual`, `nowcast`, and `forecast`. It must show
-run ID, registry version, data cutoff, generated timestamp, and confidence
-without making metadata dominate the executive view.
+A partial month is a Nowcast, never a final Actual.
 
-### 4.2 Current Month + Next Month
+### 4.2 Brand Performance
 
-Show the current landing view and the next planning month side by side:
+For HMA, GMA, and KUS, show approved Revenue, Quantity, regular non-Fleet Wholesale, regular PNVW, period context, and governed fallback/confidence information where available.
 
-- pre-month versus nowcast/actual;
-- dollar and percentage movement;
-- expected interval;
-- brand decomposition;
-- cutoff and period status.
+Kia Fleet Carpet Floor Mat remains a separate governed component and must not contaminate regular KUS PNVW.
 
-A partial month is a nowcast as of the API cutoff, never a final actual.
+### 4.3 Revenue and Quantity
 
-### 4.3 Brand Drivers
+Revenue and Quantity pages use only the Approved Run.
 
-For HMA, GMA, and KUS, show:
+- Revenue shows approved total, brand, and model views.
+- Quantity means PIO accessory units, not vehicles.
+- `accessory_units_per_wholesale_vehicle` is an average unit count and may exceed 1; it is not a penetration percentage.
+- Reconciliation and review flags are informational and do not overwrite approved values.
 
-- revenue;
-- PIO accessory quantity;
-- regular non-Fleet Wholesale;
-- official regular PNVW;
-- MoM and YoY comparisons when valid;
-- largest dollar-change driver;
-- confidence and fallback visibility.
+### 4.4 Model & PLC Planning
 
-KUS Fleet Carpet Floor Mat must appear as a separate component row or callout.
-Do not calculate regular PNVW from combined regular-plus-Fleet revenue.
+The page uses one month selector across completed Actual and planning months.
 
-### 4.4 Top Movers
+Period semantics:
 
-Display the Forecast API's approved Brand + PLC movement ranking for each
-comparison:
+- completed historical months -> `Actual`;
+- current planning month at lower-level Model/PLC grain -> `Original Forecast`;
+- later planning months -> `Forecast`.
 
-- upside and downside exactly in the order returned by `/top-movers`;
-- rank, Brand, PLC, forecast component, dollar change, and percentage context;
-- target and comparison months plus their explicit period types;
-- Kia Fleet as the separate `kia_fleet_cfm_adjustment` component.
+The default month is the latest completed Actual month published by Historical Reporting.
 
-The website must not recalculate, sort, or pad this ranking. Version 1.1.0 uses
-absolute revenue change for ranking, returns at most five real rows per
-direction, and applies no thresholds or classifications. Percentage change is
-context only and remains unavailable when comparison revenue is nonpositive.
-This is an adjacent forecast-month comparison, not a same-target revision,
-actual/nowcast change, alert, anomaly, or causal explanation.
+Summary views:
 
-### 4.5 PLC Planning
+- Top Models by Revenue;
+- Top PLCs by Revenue.
 
-Provide:
+Planning rules:
 
-- Brand + PLC quantity and revenue;
-- Brand + Model + PLC drilldown;
-- top growing and declining PLCs;
-- planning confidence;
-- regular and Kia Fleet components kept distinct;
-- reconciliation status.
+- PLC is the Official lower-level accessory planning category;
+- completed Actual uses observed all-in PIO records and does not claim a row-level Fleet/dealer split;
+- future planning may preserve `regular` and `kia_fleet_cfm_adjustment` separately where governed;
+- Kia Fleet must not be manufactured into vehicle-model attribution when governed model allocation is unavailable;
+- exact `PIS_PNO` and Part Description are not Official Forecast planning grains.
 
-PLC is the official lower-level planning category. Do not present exact
-`PIS_PNO` or Part Description as an Official Forecast level.
+### 4.5 Top Movers
 
-### 4.6 Methodology & Governance
+The detailed page supports three comparison classes.
 
-Display concise API-supplied governance information:
+#### Completed Actual movement
 
-- frozen selected methods by brand;
-- H1, H2, H3, and combined performance evidence;
-- fold coverage and prediction coverage;
-- confidence hierarchy;
-- allocation limitations at model/PLC detail;
+Examples:
+
+```text
+Apr Actual -> May Actual
+May Actual -> Jun Actual
+```
+
+These comparisons use approved Historical Reporting Brand + PLC Revenue records from the same Approved Run. The website may calculate Revenue differences and rank the real movers for display.
+
+#### Actual-to-Plan bridge
+
+```text
+Latest completed Actual -> current-month Original Forecast
+```
+
+The bridge compares all-in Brand + PLC Revenue. Current-month `regular` and `kia_fleet_cfm_adjustment` planning components are combined before comparison because completed Actual does not assert a row-level Fleet/dealer split.
+
+Do not display Regular/Fleet component tags on bridge rows.
+
+#### Forecast movement
+
+Examples:
+
+```text
+Current-month Original Forecast -> next-month Forecast
+Next-month Forecast -> following Forecast
+```
+
+Forecast-to-Forecast rankings come directly from the governed `/api/v1/top-movers` endpoint. Preserve the API's component identity, rank, direction, Revenue change, percentage context, and confidence metadata.
+
+For all mover classes:
+
+- do not invent causes;
+- do not add anomaly/severity/materiality labels unless separately governed;
+- do not call the Actual-to-Plan bridge a Landing comparison;
+- do not fabricate July/current-month lower-level landing from a brand-level Nowcast.
+
+### 4.6 Wholesale Inputs
+
+The page discloses the Wholesale input used by the Official Forecast, sponsor plan values, governed fallback values/reasons, and Kia Fleet vehicle-plan context where available.
+
+An explicit sponsor zero is different from missing/unavailable input and must remain zero.
+
+### 4.7 Governance & QA
+
+Display concise approved-run evidence:
+
+- selected methods by brand;
+- H1/H2/H3 performance evidence and coverage;
+- confidence and allocation limitations;
 - Kia Fleet treatment;
+- reconciliation checks;
 - release QA;
-- run, registry, cutoff, schema, and source-commit metadata.
+- run ID, registry, cutoff, schema, and source commit.
 
-Technical formulas and detailed QA should be expandable rather than placed on
-the executive landing screen.
+### 4.8 Output Center
 
-### 4.7 Output Center
+Provide one clearly labeled Official workbook download: the exact Sponsor XLSX from the current Approved Run.
 
-Provide one clearly labeled Official download:
+The website must not generate a second Official workbook.
 
-- the exact hash-verified Sponsor workbook from the approved API run.
+### 4.9 Update Forecast
 
-The Output Center may also offer current-view CSV exports that are explicitly
-labeled as filtered display exports. It must not generate or imply a second
-Official workbook.
+The protected monthly workflow is implemented and is the normal Official refresh path.
 
-### 4.8 About & Timeline
+```text
+Upload 4 governed source roles
+  -> validation
+  -> governed forecasting pipeline
+  -> QA / reconciliation
+  -> Draft Run
+  -> explicit approval
+  -> immutable Approved Run
+  -> Dashboard + Sponsor XLSX update together
+```
 
-Static content may cover:
+Required source roles:
 
-- the capstone and Mobis business problem;
-- team roles and responsibilities;
-- concise methodology;
-- project timeline/Gantt;
-- Phase 1 forecast system -> API -> Dashboard -> presentation.
+- CapStone / PIO;
+- HMA plan;
+- GMA plan;
+- Kia plan.
 
-This page does not require Forecast API data.
+Validation, pipeline, or QA failures leave the previous Approved Run unchanged. Only explicit approval may switch the latest Approved Run.
+
+The exploratory Data Workspace upload is not this release workflow.
 
 ## 5. API-to-page mapping
 
@@ -190,135 +240,72 @@ The current API contract is versioned under `/api/v1`.
 | Forecast API endpoint | Website use |
 |---|---|
 | `/health` | service health and approved-run availability |
-| `/runs/latest` | global run banner and metadata |
-| `/executive-summary` | Executive Overview and current/next month KPIs |
-| `/revenue` | total, brand, and model revenue views |
-| `/quantity` | total, brand, and model quantity views |
-| `/plc-planning` | Brand + PLC and Brand + Model + PLC planning |
-| `/wholesale-drivers` | regular Wholesale plan/fallback disclosures |
-| `/model-performance` | methodology and model-governance evidence |
-| `/top-movers` | API-ranked adjacent forecast-month Brand + PLC movements |
+| `/runs/latest` | Approved Run metadata |
+| `/executive-summary` | Executive Overview |
+| `/revenue` | total / brand / model Revenue |
+| `/quantity` | total / brand / model Quantity |
+| `/plc-planning` | planning-month Brand + PLC and Brand + Model + PLC records |
+| `/historical-reporting` | completed-Actual Model and Brand + PLC detail; Actual mover analysis |
+| `/wholesale-drivers` | Wholesale source / fallback disclosure |
+| `/model-performance` | model governance / performance evidence |
+| `/top-movers` | governed Forecast-to-Forecast Brand + PLC movement rankings |
 | `/qa` | release, PLC, reconciliation, and Fleet checks |
 | `/downloads/sponsor-workbook` | exact Official workbook download |
+| `/admin/forecast-updates` | protected upload / run / QA / approval workflow |
 
-The website proxy should preserve HTTP status meaning, validate schema version,
-apply timeouts, and return safe errors. It should not silently fall back to the
-website's internal forecast engine when the governed API is unavailable.
+The website proxy preserves safe HTTP meaning, validates schema compatibility, applies timeouts, and never falls back to legacy forecast values while retaining an Official label.
 
-## 6. Existing website behavior: retain, isolate, or replace
+## 6. Legacy / exploratory boundary
 
-### Likely retain after audit
+The following must remain outside Official behavior unless the governed architecture is deliberately changed:
 
-- Next.js/React/Ant Design/ECharts framework;
-- FastAPI website backend;
-- upload and in-memory workbook workspace;
-- Raw Data EDA, tables, Pivot, filters, and CSV export;
-- reusable layout, navigation, loading, and error components;
-- static About/Timeline content.
-
-### Must be isolated as Legacy/Experimental or removed from Official paths
-
-- browser-triggered official model fitting;
-- Auto or manual model selection for Official Forecast;
+- browser-triggered production model fitting;
+- Auto/manual production model selection in the website;
 - website-generated Official forecast values;
-- exact `PIS_PNO` official planning;
-- generic `-1 -> 0` business treatment;
+- exact `PIS_PNO` Official planning;
 - website-owned Fleet definitions;
-- internally generated competing SOP/Sponsor workbook;
-- hardcoded cutoff, current month, selected model, performance, or confidence.
+- generic source-value reinterpretation;
+- internally generated competing Sponsor workbooks;
+- hardcoded cutoffs, selected methods, or confidence.
 
-Do not delete these areas before a code-level audit identifies dependencies and
-reusable presentation components.
+## 7. Required application states
 
-## 7. Visual and interaction direction
-
-Use `private_reference_templates/Executive_Summary.pptx` only as a local visual
-reference for information hierarchy, sponsor color cues, large KPI emphasis,
-and BLUF/mover structure.
-
-Do not copy its dense small text, proprietary numbers, screenshots, or manual
-business conclusions. Translate the useful hierarchy into a cleaner web UI:
-
-- few large KPIs above the fold;
-- generous spacing and clear visual hierarchy;
-- restrained sponsor-appropriate palette;
-- consistent positive/negative semantics;
-- readable charts with units and periods in titles/tooltips;
-- details on demand rather than dense technical text;
-- desktop-first but responsive for common laptop/tablet widths;
-- keyboard-accessible controls and meaningful empty states.
-
-The BLUF number foundation may be automatic. Manual context such as factory
-shutdowns, supply issues, launches, and executive wording must be labeled
-`Business Note` and must not feed the prediction model.
-
-## 8. Required application states
-
-Every Official Forecast surface must handle:
+Official surfaces must handle:
 
 - loading;
-- no approved run;
+- no Approved Run;
 - unauthorized proxy/API request;
-- upstream unavailable or timeout;
+- upstream unavailable/timeout;
 - unsupported schema version;
-- stale run warning;
+- stale-run warning;
 - empty/unavailable endpoint;
-- partial data/nowcast;
-- successful approved run.
+- partial-month Nowcast;
+- successful Approved Run.
 
-Never replace a failed governed request with legacy forecast numbers while
-keeping an Official label.
+## 8. Deployment and handoff boundary
 
-## 9. Upload and refresh roadmap
+The capstone reference deployment is a single internal host running the Forecast API, website proxy, and built Next.js Dashboard.
 
-Upload-to-official-refresh is a later controlled phase, not the first API
-integration.
+- Windows + desktop Microsoft Excel is the validated/recommended host environment for the complete Sponsor workbook release workflow.
+- Client users may use Windows or macOS browsers.
+- Public cloud hosting and a public domain are not required.
+- ngrok may be used for temporary demos only.
+- Long-term SSO, managed secrets, monitoring, backup, HTTPS/internal DNS, and enterprise hosting are optional Mobis IT extensions.
 
-The target workflow is:
+## 9. Definition of done
 
-```text
-Mobis uploads governed file roles
-  -> schema and source-role validation
-  -> controlled pipeline job
-  -> QA and reconciliation
-  -> awaiting approval
-  -> approved immutable run
-  -> API latest pointer updates
-  -> Dashboard and Sponsor workbook refresh together
-```
+The capstone implementation is considered complete when:
 
-The eventual admin flow should identify separate roles for the current primary
-CapStone workbook and HMA, GMA, and Kia plan workbooks. Filenames may vary, but
-the governed sheet/section schema must pass validation. A failed upload or QA
-must leave the previous approved run visible.
-
-The existing exploratory Data Workspace upload is not this release workflow.
-
-## 10. Delivery phases
-
-1. Read-only architecture audit of current backend, frontend, and internal
-   forecasting paths.
-2. Server-side Forecast API client/proxy, environment handling, schemas, and
-   contract tests.
-3. One Executive Overview end-to-end slice using a real approved local API run.
-4. Revenue, quantity, brand, PLC, methodology/QA, and download surfaces.
-5. API-ranked Top Movers with no website-side ranking or classification.
-6. Cross-system reconciliation, privacy/security review, responsive and
-   accessibility QA, backend tests, and frontend production build.
-7. Only later: protected upload/run/QA/approval orchestration and deployment.
-
-## 11. Definition of done
-
-- Every Official number comes from one versioned approved API run.
-- Dashboard totals, brands, components, and PLC detail reconcile to the API and
-  the matching Sponsor workbook.
-- Actual/nowcast/forecast labels are correct.
-- KUS Fleet is separate and added exactly once; regular PNVW is preserved.
-- Cutoff, run, registry, schema, confidence, and QA are visible.
-- The homepage communicates the landing, change, range, next month, material
-  drivers, and cutoff in under one minute.
-- Raw EDA remains separate and cannot overwrite the approved run.
-- No secrets or proprietary artifacts are committed to the public repository.
-- Backend tests and frontend production build pass.
-- Deployment and upload automation are described only as complete when they
-  are actually implemented and validated.
+- every Official forecast value belongs to one Approved Run;
+- Actual / Nowcast / Original Forecast / Forecast semantics are correct;
+- Dashboard totals and planning detail reconcile to governed records;
+- KUS Fleet is separate and added exactly once;
+- regular PNVW excludes Fleet;
+- completed Actual detail does not assert a row-level Fleet/dealer split;
+- Model & PLC Planning uses governed Historical Reporting and PLC Planning data;
+- Top Movers correctly separates Actual, Actual-to-Plan, and Forecast movement behavior;
+- Update Forecast preserves the previous Approved Run until explicit approval;
+- the Sponsor XLSX download is the exact approved artifact;
+- Data Workspace cannot overwrite the Official Forecast;
+- no secrets or proprietary artifacts are committed to the public repository;
+- backend tests, Official Forecast frontend tests, and production build pass before release.
