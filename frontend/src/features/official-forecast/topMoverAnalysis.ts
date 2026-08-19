@@ -143,7 +143,7 @@ function actualComparisons(historical: HistoricalReportingEnvelope): MoverCompar
       target_month: targetMonth,
       comparison_label: "Actual",
       target_label: "Actual",
-      title: `${monthDisplay(targetMonth)} Actual vs ${monthDisplay(comparisonMonth)} Actual`,
+      title: `${monthDisplay(comparisonMonth)} Actual → ${monthDisplay(targetMonth)} Actual`,
       context: "Completed observed month-to-month movement",
       ...rankChanges(
         actualPoints(historical, comparisonMonth),
@@ -172,8 +172,8 @@ function bridgeComparison(historical: HistoricalReportingEnvelope, plc: PlcEnvel
     target_month: targetMonth,
     comparison_label: "Actual",
     target_label: "Original Forecast",
-    title: `${monthDisplay(targetMonth)} Original Forecast vs ${monthDisplay(comparisonMonth)} Actual`,
-    context: "Latest completed Actual vs current-month pre-month planning baseline",
+    title: `${monthDisplay(comparisonMonth)} Actual → ${monthDisplay(targetMonth)} Original Forecast`,
+    context: "Latest completed Actual to current-month pre-month planning baseline",
     ...rankChanges(
       actualPoints(historical, comparisonMonth),
       forecastAllInPoints(plc, targetMonth),
@@ -202,10 +202,10 @@ function apiRow(row: TopMover): MoverRow {
 }
 
 function forecastTitle(comparison: TopMoverComparison) {
-  if (comparison.comparison_context === "next_month_forecast_vs_current_month_premonth_forecast") {
-    return `${monthDisplay(comparison.target_month)} Forecast vs ${monthDisplay(comparison.comparison_month)} Original Forecast`;
-  }
-  return `${monthDisplay(comparison.target_month)} Forecast vs ${monthDisplay(comparison.comparison_month)} Forecast`;
+  const comparisonLabel = comparison.comparison_context === "next_month_forecast_vs_current_month_premonth_forecast"
+    ? "Original Forecast"
+    : "Forecast";
+  return `${monthDisplay(comparison.comparison_month)} ${comparisonLabel} → ${monthDisplay(comparison.target_month)} Forecast`;
 }
 
 function forecastComparisons(payload: TopMoversEnvelope): MoverComparisonView[] {
@@ -218,7 +218,7 @@ function forecastComparisons(payload: TopMoversEnvelope): MoverComparisonView[] 
     target_label: "Forecast",
     title: forecastTitle(comparison),
     context: comparison.comparison_context === "next_month_forecast_vs_current_month_premonth_forecast"
-      ? "Next-month Forecast vs current-month Original Forecast"
+      ? "Current-month Original Forecast to next-month Forecast"
       : "Adjacent Forecast-month planning movement",
     upside: comparison.upside.map(apiRow),
     downside: comparison.downside.map(apiRow),
