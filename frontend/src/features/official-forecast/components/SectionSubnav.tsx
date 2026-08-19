@@ -14,7 +14,7 @@ const groups = {
   drivers: [
     { href: "/official-forecast/brands", label: "Brand Performance" },
     { href: "/official-forecast/wholesale", label: "Wholesale Inputs" },
-    { href: "/official-forecast/plc", label: "PLC Planning" },
+    { href: "/official-forecast/plc", label: "Model & PLC Planning" },
     { href: "/official-forecast/top-movers", label: "Top Movers" },
   ],
 } as const;
