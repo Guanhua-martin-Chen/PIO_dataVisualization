@@ -30,6 +30,19 @@ export type HistoricalPlcRecord = {
   revenue_share_of_month: number | null;
 };
 
+export type HistoricalPlcComponentRecord = {
+  record_type: "actual_brand_plc_component";
+  period_type: "actual";
+  month: string;
+  brand_group: string;
+  model_scope: "All Models";
+  plc: string;
+  component: "regular" | "kia_fleet_cfm_adjustment";
+  pio_quantity: number;
+  pio_revenue: number;
+  revenue_share_of_month: number | null;
+};
+
 export type HistoricalReportingEnvelope = {
   meta: GovernedRunMetadata;
   data: {
@@ -41,14 +54,21 @@ export type HistoricalReportingEnvelope = {
     model_grain: string;
     plc_grain: string;
     component_policy: string;
+    plc_component_grain?: string;
+    plc_component_policy?: string;
     model_records: HistoricalModelRecord[];
     plc_records: HistoricalPlcRecord[];
+    plc_component_records?: HistoricalPlcComponentRecord[];
     reconciliation: Array<{
       month: string;
       passes: boolean;
       model_reconciliation_difference: number;
       brand_plc_reconciliation_difference: number;
       max_brand_reconciliation_difference: number;
+      plc_component_actual_revenue?: number;
+      plc_component_reconciliation_difference?: number;
+      plc_component_max_brand_reconciliation_difference?: number;
+      plc_component_passes?: boolean;
     }>;
   };
 };
@@ -115,6 +135,19 @@ function rankedPlcs(rows: Array<{ plc: string; brand: string; value: number }>):
 }
 
 export function topActualPlcs(historical: HistoricalReportingEnvelope, month: string): RankedPlc[] {
+  const componentRows = historical.data.plc_component_records
+    ?.filter((row) => row.month === month) ?? [];
+
+  if (componentRows.length) {
+    return rankedPlcs(componentRows.map((row) => ({
+      plc: row.plc,
+      brand: row.component === "kia_fleet_cfm_adjustment"
+        ? "Kia Fleet"
+        : row.brand_group,
+      value: row.pio_revenue,
+    })));
+  }
+
   return rankedPlcs(historical.data.plc_records
     .filter((row) => row.month === month)
     .map((row) => ({ plc: row.plc, brand: row.brand_group, value: row.pio_revenue })));

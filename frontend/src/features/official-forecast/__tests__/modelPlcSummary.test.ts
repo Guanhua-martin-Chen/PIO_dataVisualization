@@ -37,7 +37,9 @@ function historical(): HistoricalReportingEnvelope {
       period_policy: "completed actual months only; current partial month excluded",
       model_grain: "month + brand_group + normalized_model",
       plc_grain: "month + brand_group + PLC",
-      component_policy: "observed all-in PIO actual; no row-level Fleet/dealer classification is asserted",
+      component_policy: "observed all-in PIO actual with governed PLC component detail where available",
+      plc_component_grain: "month + brand_group + PLC + component",
+      plc_component_policy: "regular plus governed Kia Fleet Carpet Floor Mat components",
       model_records: [
         { record_type: "actual_model", period_type: "actual", month: "2026-06-01", brand_group: "HMA", normalized_model: "tucson", pio_quantity: 1, pio_revenue: 300, revenue_share_of_month: 0.3 },
         { record_type: "actual_model", period_type: "actual", month: "2026-06-01", brand_group: "KUS", normalized_model: "telluride", pio_quantity: 1, pio_revenue: 200, revenue_share_of_month: 0.2 },
@@ -47,6 +49,12 @@ function historical(): HistoricalReportingEnvelope {
         { record_type: "actual_brand_plc", period_type: "actual", month: "2026-06-01", brand_group: "HMA", model_scope: "All Models", plc: "Carpet Floor Mat", pio_quantity: 1, pio_revenue: 250, revenue_share_of_month: 0.25 },
         { record_type: "actual_brand_plc", period_type: "actual", month: "2026-06-01", brand_group: "KUS", model_scope: "All Models", plc: "Carpet Floor Mat", pio_quantity: 1, pio_revenue: 150, revenue_share_of_month: 0.15 },
         { record_type: "actual_brand_plc", period_type: "actual", month: "2026-06-01", brand_group: "GMA", model_scope: "All Models", plc: "Crossbar", pio_quantity: 1, pio_revenue: 100, revenue_share_of_month: 0.1 },
+      ],
+      plc_component_records: [
+        { record_type: "actual_brand_plc_component", period_type: "actual", month: "2026-06-01", brand_group: "HMA", model_scope: "All Models", plc: "Carpet Floor Mat", component: "regular", pio_quantity: 1, pio_revenue: 250, revenue_share_of_month: 0.25 },
+        { record_type: "actual_brand_plc_component", period_type: "actual", month: "2026-06-01", brand_group: "KUS", model_scope: "All Models", plc: "Carpet Floor Mat", component: "regular", pio_quantity: 0.7, pio_revenue: 100, revenue_share_of_month: 0.1 },
+        { record_type: "actual_brand_plc_component", period_type: "actual", month: "2026-06-01", brand_group: "KUS", model_scope: "All Models", plc: "Carpet Floor Mat", component: "kia_fleet_cfm_adjustment", pio_quantity: 0.3, pio_revenue: 50, revenue_share_of_month: 0.05 },
+        { record_type: "actual_brand_plc_component", period_type: "actual", month: "2026-06-01", brand_group: "GMA", model_scope: "All Models", plc: "Crossbar", component: "regular", pio_quantity: 1, pio_revenue: 100, revenue_share_of_month: 0.1 },
       ],
       reconciliation: [],
     },
@@ -105,9 +113,18 @@ test("month semantics distinguish Actual, current-month Original Forecast, and l
   assert.equal(planningPeriodForMonth(history, "2026-07-28", "2026-08-01"), "forecast");
 });
 
-test("actual summary uses only the selected completed month", () => {
+test("actual summary keeps model actuals all-in and splits governed Kia Fleet at PLC level", () => {
   assert.deepEqual(topActualModels(historical(), "2026-06-01").map((row) => row.name), ["tucson", "telluride"]);
   const rows = topActualPlcs(historical(), "2026-06-01");
+  assert.equal(rows[0].plc, "Carpet Floor Mat");
+  assert.equal(rows[0].total, 400);
+  assert.deepEqual(rows[0].brandValues, { HMA: 250, KUS: 100, "Kia Fleet": 50 });
+});
+
+test("actual PLC summary falls back to all-in records when component detail is unavailable", () => {
+  const history = historical();
+  delete history.data.plc_component_records;
+  const rows = topActualPlcs(history, "2026-06-01");
   assert.equal(rows[0].plc, "Carpet Floor Mat");
   assert.equal(rows[0].total, 400);
   assert.deepEqual(rows[0].brandValues, { HMA: 250, KUS: 150 });
