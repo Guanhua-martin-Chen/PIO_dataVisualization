@@ -56,6 +56,8 @@
 .moverRank { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: #486078; background: #edf2f7; font-weight: 700; }
 .moverIdentity { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .moverIdentity strong { overflow-wrap: anywhere; color: #20354f; }
+/* Sponsor-facing Top Movers are net Brand + PLC movements; component/confidence badges stay hidden here. */
+.moverIdentity > span { display: none; }
 .moverUp, .moverDown { display: flex; flex-direction: column; align-items: flex-end; }
 .moverUp strong { color: #20824f; }
 .moverDown strong { color: #bc3e46; }
