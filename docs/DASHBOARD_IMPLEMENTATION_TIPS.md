@@ -86,7 +86,7 @@ Summary treatment:
 Important rules:
 
 - completed Actual remains observed all-in PIO and does not assert a row-level Fleet/dealer split;
-- do not show a Fleet Actual split that the approved data does not supply;
+- when approved Historical Reporting supplies `plc_component_records`, completed-Actual PLC summaries may show the governed Kia Fleet Carpet Floor Mat component separately at Brand + PLC level while preserving the all-in total;
 - forecast Model ranking must not invent Kia Fleet model attribution;
 - forecast PLC planning may preserve Kia Fleet as a separate governed component;
 - Brand + PLC and Brand + Model + PLC are two views of the same hierarchy and must not be added together;
@@ -111,7 +111,7 @@ revenue_change = target_actual_revenue - comparison_actual_revenue
 
 and rank the largest real movements for display.
 
-Do not show Regular/Kia Fleet component tags on completed Actual rows because completed Historical Reporting does not assert that split.
+Top Movers continues to use the all-in `plc_records` view for completed Actual comparisons. Do not substitute component-level Regular/Kia Fleet rows into this ranking unless the governed comparison contract is deliberately changed.
 
 ### Completed Actual -> Current-month Original Forecast
 
@@ -123,7 +123,7 @@ Aggregate planning rows to all-in Brand + PLC before comparison:
 July all-in planning = regular + kia_fleet_cfm_adjustment
 ```
 
-because the completed Actual side is all-in.
+because the completed Actual comparison side uses the all-in `plc_records` view.
 
 Do not:
 
@@ -156,7 +156,7 @@ For all mover classes:
 
 ## 7. Kia Fleet presentation
 
-Keep `kia_fleet_cfm_adjustment` separate from `regular` wherever the approved planning records expose it.
+Keep `kia_fleet_cfm_adjustment` separate from `regular` wherever approved records expose it.
 
 Rules:
 
@@ -165,7 +165,7 @@ Rules:
 - Fleet rows do not receive regular PNVW;
 - do not use Part Description or `HBF14AC000` as a Fleet identifier;
 - do not manufacture model attribution;
-- completed Historical Reporting remains all-in unless a future governed contract explicitly provides a component split.
+- completed Historical Reporting preserves all-in `plc_records` for comparisons and may also publish a reconciled `plc_component_records` view for Brand + PLC presentation; the component view does not assert row-level Fleet/dealer identity.
 
 ## 8. Wholesale Inputs
 
@@ -311,7 +311,7 @@ The reference capstone deployment is one internal host.
 - [ ] Official total remains governed and is not reconstructed by the browser.
 - [ ] Kia Fleet is separate where governed and added exactly once.
 - [ ] Regular PNVW excludes Fleet.
-- [ ] Completed Actual does not claim a Fleet/dealer split.
+- [ ] Completed Actual does not claim a row-level Fleet/dealer split; any Fleet Actual presentation is limited to the governed reconciled Brand + PLC component view.
 - [ ] Model & PLC Planning uses correct Actual/planning semantics.
 - [ ] Actual-to-Plan bridge is all-in Brand + PLC and is not called Landing.
 - [ ] Forecast-to-Forecast Top Movers preserves API component ranking.
