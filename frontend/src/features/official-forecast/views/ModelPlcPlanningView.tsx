@@ -96,7 +96,10 @@ function modelBarOption(rows: RankedModel[]): EChartsOption | null {
 
 function plcStackOption(rows: RankedPlc[], period: PlanningPeriod): EChartsOption | null {
   if (!rows.length) return null;
-  const keys = period === "actual" ? ["HMA", "KUS", "GMA"] : ["HMA", "KUS", "GMA", "Kia Fleet"];
+  const hasKiaFleet = rows.some((row) => (row.brandValues["Kia Fleet"] ?? 0) > 0);
+  const keys = period === "actual" && !hasKiaFleet
+    ? ["HMA", "KUS", "GMA"]
+    : ["HMA", "KUS", "GMA", "Kia Fleet"];
   return {
     animationDuration: 400,
     color: keys.map((key) => BRAND_COLORS[key]),
@@ -196,7 +199,7 @@ export default function ModelPlcPlanningView({
           option={plcStackOption(plcs, period)}
           height={300}
           summary={period === "actual"
-            ? "Completed observed PLC detail, stacked by brand."
+            ? "Completed observed PLC detail; governed Kia Fleet Carpet Floor Mat is shown separately in amber where available."
             : "Official Brand + PLC planning revenue; governed Kia Fleet is shown separately in amber."}
         />
       </div>
