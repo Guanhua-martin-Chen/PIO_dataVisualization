@@ -284,6 +284,8 @@ npm run test:official-forecast
 npm run build
 ```
 
+GitHub Actions repeats the website proxy test, Official Forecast frontend tests, and production build for every push and pull request. It does not deploy the application or use deployment credentials.
+
 Forecasting repository:
 
 ```powershell

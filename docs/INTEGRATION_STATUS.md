@@ -1,6 +1,6 @@
 # Forecast API and Dashboard Integration Status
 
-Last updated: 2026-08-19
+Last updated: 2026-08-21
 
 ## Current status
 
@@ -122,8 +122,9 @@ The browser never receives the Forecast API key.
 Final Phase 3 website validation completed before merge:
 
 - focused governed proxy tests: **13 passed**;
-- Official Forecast frontend tests: **24 passed**;
+- Official Forecast frontend tests: **25 passed**;
 - Next.js 15 production build: **passed**, including compilation, lint/type validation, static page generation, and build finalization;
+- GitHub Actions CI now reruns the focused governed proxy test, Official Forecast frontend tests, and production build for each push and pull request; it has no deployment step or secrets;
 - live local Model & PLC Planning visual checks completed for completed Actual, current-month Original Forecast, and future Forecast views;
 - live local Top Movers visual checks completed for Actual movement, Actual-to-Plan bridge, and Forecast movement;
 - feature branch merged to `main` and removed locally/remotely.
