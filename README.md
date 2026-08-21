@@ -272,6 +272,8 @@ Production build:
 npm run build
 ```
 
+GitHub Actions runs these same three checks on every push and pull request.
+
 ## Repository boundaries
 
 This public repository must not contain:

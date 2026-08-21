@@ -20,10 +20,6 @@ function kindLabel(kind: MoverComparisonKind) {
   return "Forecast movement";
 }
 
-function componentLabel(component?: string) {
-  return component === "kia_fleet_cfm_adjustment" ? "Kia Fleet" : "Regular";
-}
-
 function MoverList({ direction, rows, comparison }: {
   direction: "upside" | "downside";
   rows: MoverRow[];
@@ -46,12 +42,6 @@ function MoverList({ direction, rows, comparison }: {
               <span className={styles.moverRank}>{row.rank}</span>
               <div className={styles.moverIdentity}>
                 <strong>{row.brand_group} / {row.plc}</strong>
-                {comparison.kind === "forecast" ? (
-                  <span>
-                    <Tag color={row.forecast_component === "kia_fleet_cfm_adjustment" ? "gold" : "blue"}>{componentLabel(row.forecast_component)}</Tag>
-                    {row.confidence_level ? <Tag>{row.confidence_level}</Tag> : null}
-                  </span>
-                ) : null}
               </div>
               <div className={direction === "upside" ? styles.moverUp : styles.moverDown}>
                 <strong>{direction === "upside" ? "+" : "-"}{compactCurrency(row.absolute_revenue_change)}</strong>
