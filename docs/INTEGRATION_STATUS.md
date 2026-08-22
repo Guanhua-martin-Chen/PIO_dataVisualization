@@ -1,6 +1,6 @@
 # Forecast API and Dashboard Integration Status
 
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 ## Current status
 
@@ -85,7 +85,7 @@ Next-month Forecast -> following Forecast
 ...
 ```
 
-Forecast-to-Forecast ranking and component-level rows remain supplied by the governed `/top-movers` API.
+Forecast-to-Forecast ranking is supplied by the governed `/top-movers` API at net all-in Brand + PLC grain. Before ranking, the API combines `regular` and governed `kia_fleet_cfm_adjustment` Revenue for the same month, Brand, and PLC; published mover rows use `forecast_component = "all_components"`. Component-level Regular/Fleet planning remains preserved outside Top Movers in PLC Planning, the Sponsor workbook, PNVW treatment, QA, and other governed Fleet detail views. The browser does not re-rank movers or show component/confidence badges in this Forecast Top Movers view.
 
 No website-side model fitting, forecast reselection, anomaly classification, causal explanation, or materiality threshold is introduced by these display analyses.
 
