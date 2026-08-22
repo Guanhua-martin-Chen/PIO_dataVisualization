@@ -174,7 +174,7 @@ Current-month Original Forecast -> next-month Forecast
 Next-month Forecast -> following Forecast
 ```
 
-Forecast-to-Forecast rankings come directly from the governed `/api/v1/top-movers` endpoint. Preserve the API's component identity, rank, direction, Revenue change, percentage context, and confidence metadata.
+Forecast-to-Forecast rankings come directly from the governed `/api/v1/top-movers` endpoint. Preserve the API-published net all-in Brand + PLC ranking, direction, Revenue change, and percentage context. Before movement is ranked, the Forecast API combines `regular` and governed `kia_fleet_cfm_adjustment` records for the same month, Brand, and PLC. Published mover rows use `forecast_component = "all_components"` to make that ranking grain explicit. The browser must not calculate or re-rank Forecast Top Movers, and it must not display Regular/Fleet or confidence badges on those rows.
 
 For all mover classes:
 

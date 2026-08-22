@@ -138,14 +138,18 @@ Use the governed `/top-movers` API directly for Forecast-to-Forecast movement.
 
 Preserve:
 
-- API ranking;
-- Brand + PLC + `forecast_component` identity;
+- API-published net all-in Brand + PLC ranking;
+- `forecast_component = "all_components"` as the published ranking-grain marker;
 - upside/downside direction;
 - Revenue change;
-- percentage context;
-- confidence metadata where supplied.
+- percentage context.
 
-Regular and Kia Fleet may appear separately—even for the same PLC—and that is valid because they are distinct governed component identities.
+Before the Forecast API calculates movement, it sums `regular` and
+`kia_fleet_cfm_adjustment` for the same month, Brand, and PLC. Therefore,
+Kia Carpet Floor Mat appears once as a net all-in mover, not as separate
+Regular and Fleet movers. The browser must display the published API ranking
+without calculation or re-ranking and must not show Regular/Fleet or
+confidence badges on Forecast Top Movers.
 
 For all mover classes:
 
@@ -314,7 +318,7 @@ The reference capstone deployment is one internal host.
 - [ ] Completed Actual does not claim a row-level Fleet/dealer split; any Fleet Actual presentation is limited to the governed reconciled Brand + PLC component view.
 - [ ] Model & PLC Planning uses correct Actual/planning semantics.
 - [ ] Actual-to-Plan bridge is all-in Brand + PLC and is not called Landing.
-- [ ] Forecast-to-Forecast Top Movers preserves API component ranking.
+- [ ] Forecast-to-Forecast Top Movers preserves the API-published net all-in Brand + PLC ranking without browser re-ranking or component/confidence badges.
 - [ ] No exact part number/Part Description is presented as Official planning grain.
 - [ ] Update Forecast preserves the previous Approved Run until explicit approval.
 - [ ] The Official workbook is the API-proxied approved artifact.
