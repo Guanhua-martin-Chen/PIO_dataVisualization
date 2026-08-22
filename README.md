@@ -274,6 +274,14 @@ npm run build
 
 GitHub Actions runs these same three checks on every push and pull request.
 
+## Reference acceptance and release boundary
+
+Before a capstone handoff or a temporary demonstration, verify the running three-service chain, the Approved Run metadata, the Official Forecast views, and the exact Sponsor workbook download. The practical checklist and shutdown steps are in [`DEPLOYMENT.md`](DEPLOYMENT.md#p0-acceptance-and-closeout).
+
+The downloaded workbook is accepted only when its SHA-256 value matches `sponsor_workbook_sha256` returned by the current Approved Run. Do not substitute a locally generated workbook, a prior download, or a workbook copied from another run.
+
+This is reference-host acceptance, not a claim of public production hosting. A tunnel such as ngrok remains a temporary, opt-in demonstration mechanism only.
+
 ## Repository boundaries
 
 This public repository must not contain:

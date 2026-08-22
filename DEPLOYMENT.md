@@ -292,6 +292,43 @@ Forecasting repository:
 python -m pytest -q tests --basetemp=.tmp_pytest -p no:cacheprovider
 ```
 
+## P0 acceptance and closeout
+
+Run this check on the reference host after all three services are started and before calling the handoff complete.
+
+```powershell
+$governed = Invoke-RestMethod http://127.0.0.1:8100/api/v1/health
+$website = Invoke-RestMethod http://127.0.0.1:8000/api/official-forecast/v1/health
+$run = Invoke-RestMethod http://127.0.0.1:8000/api/official-forecast/v1/runs/latest
+
+$governed
+$website
+$run.meta
+$run.sponsor_workbook_filename
+$run.sponsor_workbook_sha256
+```
+
+Both health responses must report `status: ok`, `approved_run_available: True`, and the same run identifier. Confirm that the latest-run metadata is the intended Approved Run, then review the Dashboard in this order:
+
+```text
+Overview
+  -> Revenue
+  -> Model & PLC Planning (completed Actual and planning month)
+  -> Top Movers
+  -> Governance & QA
+  -> Output Center
+```
+
+In Output Center, download the Sponsor workbook and compare its SHA-256 value with `$run.sponsor_workbook_sha256`:
+
+```powershell
+Get-FileHash -Algorithm SHA256 "<path-to-the-downloaded-workbook>"
+```
+
+The download is accepted only when the two hashes match. This verifies that the Dashboard served the exact workbook belonging to the currently displayed Approved Run.
+
+If ngrok was started for a temporary external demo, close it with `Ctrl+C` after the demo. To stop the local reference stack, use `Ctrl+C` in the Dashboard, Website proxy, and Governed Forecast API terminals. Closing the services does not alter the immutable Approved Run.
+
 ## Handoff boundary
 
 This capstone delivers a deployable reference application and governed forecast workflow. Mobis does not need to purchase public hosting to use the reference deployment.
