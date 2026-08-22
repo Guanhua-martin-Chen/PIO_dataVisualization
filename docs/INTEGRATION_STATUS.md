@@ -137,6 +137,17 @@ Protected Update Forecast validation completed previously:
 - the smoke test intentionally stopped before approval while running the feature branch, preserving the existing Approved Run;
 - forecasting-repository full regression suite passed before workflow merge.
 
+## Final reference-host acceptance
+
+The final P0 reference-host acceptance is complete for the current Approved Run:
+
+- the Governed Forecast API and Website proxy health endpoints both reported an available Approved Run with matching metadata;
+- the Dashboard rendered the Official Forecast acceptance path: Overview, Revenue, Model & PLC Planning for Actual and planning periods, Top Movers, and Governance & QA;
+- Governance & QA reported all release checks passing for the displayed run;
+- Output Center downloaded a Sponsor workbook whose SHA-256 value matched the latest-run metadata.
+
+This evidence validates the local three-service reference deployment and its immutable-run linkage. It is not a claim that the application is publicly hosted or operated as a Mobis production service.
+
 ## Repository / privacy boundary
 
 This repository is public.
@@ -165,14 +176,13 @@ The recommended capstone handoff is a single-host internal deployment.
 
 See [`../DEPLOYMENT.md`](../DEPLOYMENT.md).
 
-## Remaining handoff work
+## Final human handoff actions
 
-Before final sponsor handoff:
+The documentation and local reference-host P0 acceptance are complete. The following actions require the designated project or Mobis owners:
 
-1. finalize the simplified README / deployment documentation in both repositories;
-2. create a fixed capstone release tag on both repositories;
-3. confirm designated Mobis technical owners have access to the private forecasting repository;
-4. deliver the current validated Sponsor workbook through an approved private channel;
-5. provide any initial deployment credentials separately from GitHub, or have Mobis choose its own values on deployment.
+1. create a fixed capstone release tag on both repositories;
+2. confirm designated Mobis technical owners have access to the private forecasting repository;
+3. deliver the validated Sponsor workbook through an approved private channel;
+4. provide initial deployment credentials separately from GitHub, or have Mobis choose host-specific values on deployment.
 
 Long-term hosting, SSO, enterprise secret management, monitoring, backup, and retention remain Mobis IT decisions rather than capstone blockers.
